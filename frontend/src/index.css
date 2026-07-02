@@ -1,0 +1,97 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=Exo+2:wght@600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Root variables */
+:root {
+  --navy: #001a4d;
+  --blue: #0066cc;
+  --darkblue: #003399;
+}
+
+/* Base styles */
+* {
+  font-family: 'DM Sans', system-ui, -apple-system, sans-serif;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: 'Exo 2', sans-serif;
+  font-weight: 600;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  background: #f9fafb;
+  color: #333333;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #f1f5f9;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* Utility classes */
+.shadow-subtle {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.shadow-medium {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+}
+
+.shadow-emphasis {
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+}
+
+/* Animation */
+@keyframes spin-slow {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-spin {
+  animation: spin-slow 1s linear infinite;
+}
+
+/* Focus styles for accessibility */
+:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+
+/* Form input focus */
+input:focus,
+textarea:focus,
+select:focus {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px rgba(0, 102, 204, 0.1);
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .md\:m-5 {
+    margin: 0;
+  }
+
+  .md\:rounded-lg {
+    border-radius: 0;
+  }
+}
