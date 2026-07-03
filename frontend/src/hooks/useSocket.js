@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
 import io from 'socket.io-client';
 
-export function useSocket(url = 'http://localhost:5000') {
+export function useSocket() {
   const [socket, setSocket] = useState(null);
   const [isConnected, setIsConnected] = useState(false);
 
   useEffect(() => {
+    const url = 'https://re-intel-production.up.railway.app';
     const newSocket = io(url, {
       reconnection: true,
       reconnectionDelay: 1000,
