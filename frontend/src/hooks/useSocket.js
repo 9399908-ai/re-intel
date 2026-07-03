@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react';
 import io from 'socket.io-client';
 
+const BACKEND_URL = 'https://re-intel-production.up.railway.app';
+
 export function useSocket() {
   const [socket, setSocket] = useState(null);
   const [isConnected, setIsConnected] = useState(false);
 
   useEffect(() => {
-    const url = 'https://re-intel-production.up.railway.app';
-    const newSocket = io(url, {
+    const newSocket = io(BACKEND_URL, {
       reconnection: true,
       reconnectionDelay: 1000,
       reconnectionDelayMax: 5000,
@@ -33,7 +34,7 @@ export function useSocket() {
     return () => {
       newSocket.close();
     };
-  }, [url]);
+  }, []);
 
   return { socket, isConnected };
 }

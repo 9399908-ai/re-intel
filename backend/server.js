@@ -8,15 +8,20 @@ dotenv.config();
 
 const app = express();
 const server = http.createServer(app);
+const ALLOWED_ORIGINS = [
+  'https://re-intel.vercel.app',
+  'http://localhost:3000',
+];
+
 const io = new SocketIOServer(server, {
   cors: {
-    origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+    origin: ALLOWED_ORIGINS,
     methods: ['GET', 'POST'],
   },
 });
 
 // Middleware
-app.use(cors());
+app.use(cors({ origin: ALLOWED_ORIGINS }));
 app.use(express.json());
 
 // Store active connections
@@ -63,7 +68,7 @@ io.on('connection', (socket) => {
   socket.on('send-message', (data) => {
     const { channel, message, sender } = data;
     
-    io.to(channel).emit('receive-message', {
+    socket.to(channel).emit('receive-message', {
       id: Date.now(),
       sender,
       content: message,

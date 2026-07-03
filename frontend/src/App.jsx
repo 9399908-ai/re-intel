@@ -15,7 +15,7 @@ function App() {
   useEffect(() => {
     const fetchChannels = async () => {
       try {
-        const response = await fetch('http://localhost:5000/api/channels');
+        const response = await fetch('https://re-intel-production.up.railway.app/api/channels');
         const data = await response.json();
         setChannels(data.channels);
       } catch (error) {
