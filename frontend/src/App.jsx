@@ -4,6 +4,7 @@ import Sidebar from './components/Sidebar';
 import ChatView from './views/ChatView';
 import CalendarView from './views/CalendarView';
 import AdminView from './views/AdminView';
+import { API_URL } from './config';
 
 function App() {
   const [currentView, setCurrentView] = useState('chat');
@@ -15,7 +16,7 @@ function App() {
   useEffect(() => {
     const fetchChannels = async () => {
       try {
-        const response = await fetch('https://re-intel-production.up.railway.app/api/channels');
+        const response = await fetch(`${API_URL}/api/channels`);
         const data = await response.json();
         setChannels(data.channels);
       } catch (error) {

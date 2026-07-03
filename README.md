@@ -89,10 +89,36 @@ re-intel/
 - [x] Design system complete
 - [x] Setup documentation complete
 - [x] Starter code scaffolded
-- [ ] Environment setup (Phase 1)
-- [ ] Frontend components (Phase 2)
-- [ ] Backend API (Phase 3)
-- [ ] Database integration (Phase 4)
+- [x] Environment setup (Phase 1)
+- [x] Frontend components (Phase 2)
+- [x] Backend API (Phase 3)
+- [x] Database integration (Phase 4) — falls back to in-memory store when `DATABASE_URL` is unset
+- [ ] Authentication (JWT) — next up
+- [ ] Payments (Stripe), emails (SendGrid), calendar invites (Google)
+
+## 🔌 API Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/health` | Server + database status |
+| GET | `/api/channels` | List channels |
+| GET | `/api/messages?channel=<name>` | Message history for a channel |
+| GET | `/api/events` | Upcoming events with registration counts |
+| POST | `/api/events/:id/register` | Register for an event (`{ email }`) |
+| GET | `/api/members/pending` | Members awaiting verification |
+| POST | `/api/members/:id/approve` | Approve a member |
+| POST | `/api/members/:id/deny` | Deny (remove) a member |
+| GET | `/api/stats` | Member / message / match counts |
+| GET | `/api/matches/suggestions` | Weekly match suggestions from the compatibility engine |
+
+**Socket.io events:** `join-channel`, `leave-channel`, `send-message` → broadcasts `receive-message` to other members of the channel; messages are persisted.
+
+## ☁️ Deployment
+
+- **Frontend:** Vercel — `https://re-intel.vercel.app` (auto-deploys from `main`)
+- **Backend:** Railway — `https://re-intel-production.up.railway.app` (root directory `backend/`)
+- On boot the backend runs `prisma db push` to sync the schema, then seeds channels and sample events if the database is empty. Without `DATABASE_URL`, it serves everything from an in-memory store (data resets on restart).
+- To enable persistence on Railway: add a PostgreSQL plugin and set `DATABASE_URL` in the backend service variables.
 
 ---
 

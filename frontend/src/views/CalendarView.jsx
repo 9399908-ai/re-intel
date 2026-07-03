@@ -1,43 +1,23 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
+import { API_URL } from '../config';
+
+const formatEventDate = (iso) =>
+  new Date(iso).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+
+const formatEventTime = (iso) =>
+  new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
 
 function CalendarView() {
-  const events = [
-    {
-      id: 1,
-      title: 'Re-Deal NYC Mixer',
-      date: 'Sun, Jun 30',
-      time: '6:00 PM',
-      location: 'Marriott, Midtown',
-      status: 'attending',
-    },
-    {
-      id: 2,
-      title: 'Refinance Workshop',
-      date: 'Mon, Jul 8',
-      time: '2:00 PM',
-      location: 'Virtual',
-      status: 'registered',
-    },
-    {
-      id: 3,
-      title: 'TRD NYC Management Monthly Standup',
-      date: 'Wed, Jul 10',
-      time: '10:00 AM',
-      location: 'Zoom',
-      status: 'scheduled',
-    },
-  ];
+  const [events, setEvents] = useState([]);
+  const [loading, setLoading] = useState(true);
 
-  const meetings = [
-    {
-      id: 1,
-      name: 'Robert Martinez',
-      date: 'Sun, Jun 30',
-      time: '3:00 PM',
-      type: 'Google Meet',
-      status: 'approved',
-    },
-  ];
+  useEffect(() => {
+    fetch(`${API_URL}/api/events`)
+      .then((res) => res.json())
+      .then((data) => setEvents(data.events || []))
+      .catch((error) => console.error('Error fetching events:', error))
+      .finally(() => setLoading(false));
+  }, []);
 
   return (
     <div className="flex flex-col h-full">
@@ -49,48 +29,40 @@ function CalendarView() {
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-6 space-y-8">
-        {/* Meetings Section */}
-        {meetings.length > 0 && (
-          <section>
-            <h3 className="text-sm font-bold text-navy mb-4 uppercase tracking-wide">Your Meetings</h3>
+        <section>
+          <h3 className="text-sm font-bold text-navy mb-4 uppercase tracking-wide">Upcoming Events</h3>
+          {loading ? (
+            <p className="text-sm text-gray-500">Loading events...</p>
+          ) : events.length === 0 ? (
+            <p className="text-sm text-gray-500">No upcoming events</p>
+          ) : (
             <div className="space-y-3">
-              {meetings.map((meeting) => (
+              {events.map((event) => (
                 <div
-                  key={meeting.id}
-                  className="border-l-4 border-blue bg-blue bg-opacity-5 rounded-lg p-4"
+                  key={event.id}
+                  className="border border-gray-200 rounded-lg p-4 hover:shadow-subtle transition-shadow"
                 >
-                  <p className="font-semibold text-sm text-navy">{meeting.name}</p>
-                  <p className="text-xs text-gray-600 mt-2">📅 {meeting.date} • {meeting.time}</p>
-                  <p className="text-xs text-gray-600">{meeting.type} • Status: {meeting.status}</p>
+                  <div className="flex justify-between items-start">
+                    <div className="flex-1">
+                      <h4 className="font-semibold text-sm text-navy">{event.title}</h4>
+                      {event.description && (
+                        <p className="text-xs text-gray-600 mt-1">{event.description}</p>
+                      )}
+                      <p className="text-xs text-gray-600 mt-2">
+                        📅 {formatEventDate(event.startDate)} • {formatEventTime(event.startDate)}
+                      </p>
+                      {event.location && <p className="text-xs text-gray-600">📍 {event.location}</p>}
+                      {event.capacity && (
+                        <p className="text-xs text-gray-500 mt-2">
+                          {event.registered ?? 0} / {event.capacity} registered
+                        </p>
+                      )}
+                    </div>
+                  </div>
                 </div>
               ))}
             </div>
-          </section>
-        )}
-
-        {/* Events Section */}
-        <section>
-          <h3 className="text-sm font-bold text-navy mb-4 uppercase tracking-wide">Upcoming Events</h3>
-          <div className="space-y-3">
-            {events.map((event) => (
-              <div
-                key={event.id}
-                className="border border-gray-200 rounded-lg p-4 hover:shadow-subtle transition-shadow"
-              >
-                <div className="flex justify-between items-start">
-                  <div className="flex-1">
-                    <h4 className="font-semibold text-sm text-navy">{event.title}</h4>
-                    <p className="text-xs text-gray-600 mt-2">📅 {event.date} • {event.time}</p>
-                    <p className="text-xs text-gray-600">📍 {event.location}</p>
-                    <p className="text-xs text-gray-500 mt-2">Status: {event.status}</p>
-                  </div>
-                  <button className="px-3 py-1 text-xs bg-blue text-white rounded hover:opacity-90 transition-opacity">
-                    Details
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
+          )}
         </section>
       </div>
     </div>

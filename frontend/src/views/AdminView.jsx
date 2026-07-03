@@ -1,51 +1,62 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { API_URL } from '../config';
+
+const formatEventDate = (iso) =>
+  new Date(iso).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+
+const formatEventTime = (iso) =>
+  new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
 
 function AdminView() {
-  const [pendingMembers] = useState([
-    {
-      id: 1,
-      name: 'John Smith',
-      email: 'john@example.com',
-      title: 'Broker',
-      company: 'Smith Realty',
-      requestedAt: '2 hours ago',
-    },
-    {
-      id: 2,
-      name: 'Alice Johnson',
-      email: 'alice@example.com',
-      title: 'Vendor',
-      company: 'Property Solutions',
-      requestedAt: '1 hour ago',
-    },
-  ]);
+  const [pendingMembers, setPendingMembers] = useState([]);
+  const [events, setEvents] = useState([]);
+  const [stats, setStats] = useState({ members: 0, messages: 0, matches: 0 });
+  const [matchSuggestions, setMatchSuggestions] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [actionError, setActionError] = useState(null);
 
-  const [events] = useState([
-    {
-      id: 1,
-      title: 'Re-Deal NYC Mixer',
-      date: '2024-06-30',
-      time: '6:00 PM',
-      capacity: 100,
-      registered: 42,
-    },
-    {
-      id: 2,
-      title: 'Refinance Workshop',
-      date: '2024-07-08',
-      time: '2:00 PM',
-      capacity: 50,
-      registered: 28,
-    },
-  ]);
+  const loadData = useCallback(async () => {
+    try {
+      const [membersRes, eventsRes, statsRes, matchesRes] = await Promise.all([
+        fetch(`${API_URL}/api/members/pending`).then((r) => r.json()),
+        fetch(`${API_URL}/api/events`).then((r) => r.json()),
+        fetch(`${API_URL}/api/stats`).then((r) => r.json()),
+        fetch(`${API_URL}/api/matches/suggestions`).then((r) => r.json()),
+      ]);
+      setPendingMembers(membersRes.members || []);
+      setEvents(eventsRes.events || []);
+      setStats(statsRes.stats || { members: 0, messages: 0, matches: 0 });
+      setMatchSuggestions(matchesRes.suggestions || []);
+    } catch (error) {
+      console.error('Error loading admin data:', error);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
-  const handleApprove = (id) => {
-    alert(`Member ${id} approved!`);
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  const handleMemberAction = async (id, action) => {
+    setActionError(null);
+    try {
+      const res = await fetch(`${API_URL}/api/members/${id}/${action}`, { method: 'POST' });
+      if (!res.ok) throw new Error(`Request failed (${res.status})`);
+      setPendingMembers((prev) => prev.filter((m) => m.id !== id));
+    } catch (error) {
+      console.error(`Error on ${action}:`, error);
+      setActionError(`Could not ${action} member. Please try again.`);
+    }
   };
 
-  const handleDeny = (id) => {
-    alert(`Member ${id} denied`);
-  };
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-full">
+        <p className="text-sm text-gray-500">Loading admin data...</p>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col h-full">
@@ -57,40 +68,77 @@ function AdminView() {
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-6 space-y-8">
+        {actionError && (
+          <div className="bg-red-50 border border-red-200 text-red-700 text-xs rounded-lg px-4 py-3">
+            {actionError}
+          </div>
+        )}
+
         {/* Pending Verifications */}
         <section>
           <div className="mb-4">
             <h3 className="text-sm font-bold text-navy uppercase tracking-wide">Pending Member Verification</h3>
             <p className="text-xs text-gray-600 mt-1">{pendingMembers.length} members awaiting approval</p>
           </div>
-          <div className="space-y-3">
-            {pendingMembers.map((member) => (
-              <div key={member.id} className="bg-white border border-gray-200 rounded-lg p-4">
-                <div className="flex justify-between items-start mb-3">
-                  <div className="flex-1">
-                    <p className="font-semibold text-sm text-navy">{member.name}</p>
-                    <p className="text-xs text-gray-600">{member.email}</p>
-                    <p className="text-xs text-gray-600">{member.title} • {member.company}</p>
-                    <p className="text-xs text-gray-500 mt-2">Requested {member.requestedAt}</p>
+          {pendingMembers.length === 0 ? (
+            <p className="text-sm text-gray-500">No members awaiting approval</p>
+          ) : (
+            <div className="space-y-3">
+              {pendingMembers.map((member) => (
+                <div key={member.id} className="bg-white border border-gray-200 rounded-lg p-4">
+                  <div className="flex justify-between items-start mb-3">
+                    <div className="flex-1">
+                      <p className="font-semibold text-sm text-navy">{member.name}</p>
+                      <p className="text-xs text-gray-600">{member.email}</p>
+                      <p className="text-xs text-gray-600">{member.title} • {member.company}</p>
+                    </div>
+                  </div>
+                  <div className="flex gap-2 pt-3 border-t border-gray-200">
+                    <button
+                      onClick={() => handleMemberAction(member.id, 'approve')}
+                      className="flex-1 px-3 py-2 text-xs bg-green-500 text-white rounded hover:opacity-90 transition-opacity"
+                    >
+                      ✓ Approve
+                    </button>
+                    <button
+                      onClick={() => handleMemberAction(member.id, 'deny')}
+                      className="flex-1 px-3 py-2 text-xs bg-red-500 text-white rounded hover:opacity-90 transition-opacity"
+                    >
+                      ✕ Deny
+                    </button>
                   </div>
                 </div>
-                <div className="flex gap-2 pt-3 border-t border-gray-200">
-                  <button
-                    onClick={() => handleApprove(member.id)}
-                    className="flex-1 px-3 py-2 text-xs bg-green-500 text-white rounded hover:opacity-90 transition-opacity"
-                  >
-                    ✓ Approve
-                  </button>
-                  <button
-                    onClick={() => handleDeny(member.id)}
-                    className="flex-1 px-3 py-2 text-xs bg-red-500 text-white rounded hover:opacity-90 transition-opacity"
-                  >
-                    ✕ Deny
-                  </button>
-                </div>
-              </div>
-            ))}
+              ))}
+            </div>
+          )}
+        </section>
+
+        {/* Weekly Match Suggestions */}
+        <section>
+          <div className="mb-4">
+            <h3 className="text-sm font-bold text-navy uppercase tracking-wide">Weekly Match Suggestions</h3>
+            <p className="text-xs text-gray-600 mt-1">Generated by the compatibility engine</p>
           </div>
+          {matchSuggestions.length === 0 ? (
+            <p className="text-sm text-gray-500">Not enough verified members to generate matches</p>
+          ) : (
+            <div className="space-y-2">
+              {matchSuggestions.map((match, index) => (
+                <div
+                  key={`${match.userId}-${match.matchedUserId}-${index}`}
+                  className="bg-white border border-gray-200 rounded-lg p-3 flex justify-between items-center"
+                >
+                  <p className="text-xs text-gray-700">
+                    <span className="font-semibold text-navy">{match.userName}</span>
+                    {' ↔ '}
+                    <span className="font-semibold text-navy">{match.matchedName}</span>
+                    <span className="text-gray-500"> ({match.matchedTitle}, {match.matchedCompany})</span>
+                  </p>
+                  <span className="text-xs font-bold text-blue ml-3 flex-shrink-0">{match.score}</span>
+                </div>
+              ))}
+            </div>
+          )}
         </section>
 
         {/* Events Management */}
@@ -100,30 +148,36 @@ function AdminView() {
             <p className="text-xs text-gray-600 mt-1">{events.length} events scheduled</p>
           </div>
           <div className="space-y-3">
-            {events.map((event) => (
-              <div key={event.id} className="bg-white border border-gray-200 rounded-lg p-4">
-                <div className="flex justify-between items-start mb-3">
-                  <div className="flex-1">
-                    <p className="font-semibold text-sm text-navy">{event.title}</p>
-                    <p className="text-xs text-gray-600">{event.date} at {event.time}</p>
-                    <div className="mt-2 w-full bg-gray-200 rounded-full h-2">
-                      <div
-                        className="bg-blue h-2 rounded-full"
-                        style={{
-                          width: `${(event.registered / event.capacity) * 100}%`,
-                        }}
-                      ></div>
+            {events.map((event) => {
+              const registered = event.registered ?? 0;
+              const capacity = event.capacity || 0;
+              const pct = capacity ? Math.round((registered / capacity) * 100) : 0;
+              return (
+                <div key={event.id} className="bg-white border border-gray-200 rounded-lg p-4">
+                  <div className="flex justify-between items-start">
+                    <div className="flex-1">
+                      <p className="font-semibold text-sm text-navy">{event.title}</p>
+                      <p className="text-xs text-gray-600">
+                        {formatEventDate(event.startDate)} at {formatEventTime(event.startDate)}
+                      </p>
+                      {capacity > 0 && (
+                        <>
+                          <div className="mt-2 w-full bg-gray-200 rounded-full h-2">
+                            <div
+                              className="bg-blue h-2 rounded-full"
+                              style={{ width: `${Math.min(pct, 100)}%` }}
+                            ></div>
+                          </div>
+                          <p className="text-xs text-gray-600 mt-1">
+                            {registered} / {capacity} registered ({pct}%)
+                          </p>
+                        </>
+                      )}
                     </div>
-                    <p className="text-xs text-gray-600 mt-1">
-                      {event.registered} / {event.capacity} registered ({Math.round((event.registered / event.capacity) * 100)}%)
-                    </p>
                   </div>
                 </div>
-                <button className="w-full px-3 py-2 text-xs bg-blue text-white rounded hover:opacity-90 transition-opacity">
-                  Edit Event
-                </button>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </section>
 
@@ -132,15 +186,15 @@ function AdminView() {
           <h3 className="text-sm font-bold text-navy uppercase tracking-wide mb-4">Quick Stats</h3>
           <div className="grid grid-cols-3 gap-3">
             <div className="bg-blue bg-opacity-5 border border-blue rounded-lg p-4 text-center">
-              <p className="text-2xl font-bold text-blue">42</p>
-              <p className="text-xs text-gray-600 mt-1">Total Members</p>
+              <p className="text-2xl font-bold text-blue">{stats.members}</p>
+              <p className="text-xs text-gray-600 mt-1">Verified Members</p>
             </div>
             <div className="bg-blue bg-opacity-5 border border-blue rounded-lg p-4 text-center">
-              <p className="text-2xl font-bold text-blue">127</p>
+              <p className="text-2xl font-bold text-blue">{stats.messages}</p>
               <p className="text-xs text-gray-600 mt-1">Messages</p>
             </div>
             <div className="bg-blue bg-opacity-5 border border-blue rounded-lg p-4 text-center">
-              <p className="text-2xl font-bold text-blue">8</p>
+              <p className="text-2xl font-bold text-blue">{stats.matches}</p>
               <p className="text-xs text-gray-600 mt-1">Matches</p>
             </div>
           </div>

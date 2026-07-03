@@ -48,14 +48,17 @@ model Channel {
 }
 
 // Message model
+// sender relation is optional until auth is added; senderName carries the
+// display name for messages sent by unauthenticated members
 model Message {
-  id        Int     @id @default(autoincrement())
-  content   String
-  sender    User    @relation(fields: [senderId], references: [id])
-  senderId  Int
-  channel   Channel @relation(fields: [channelId], references: [id])
-  channelId Int
-  createdAt DateTime @default(now())
+  id         Int      @id @default(autoincrement())
+  content    String
+  senderName String
+  sender     User?    @relation(fields: [senderId], references: [id])
+  senderId   Int?
+  channel    Channel  @relation(fields: [channelId], references: [id])
+  channelId  Int
+  createdAt  DateTime @default(now())
 
   @@index([channelId])
   @@index([senderId])

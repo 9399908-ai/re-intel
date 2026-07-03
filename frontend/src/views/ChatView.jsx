@@ -1,25 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useSocket } from '../hooks/useSocket';
+import { API_URL, getDisplayName } from '../config';
 
 function ChatView({ selectedChannel }) {
-  const [messages, setMessages] = useState([
-    {
-      id: 1,
-      sender: 'Marcus Lee',
-      content: 'Anyone using new property management software?',
-      timestamp: '2:34 PM',
-      isOwn: false,
-    },
-    {
-      id: 2,
-      sender: 'Jennifer Park',
-      content: 'We switched to BuildingOS. Great reporting suite.',
-      timestamp: '2:41 PM',
-      isOwn: false,
-    },
-  ]);
-
+  const [messages, setMessages] = useState([]);
   const [inputValue, setInputValue] = useState('');
+  const [displayName] = useState(getDisplayName);
   const { socket, isConnected } = useSocket();
   const messagesEndRef = useRef(null);
 
@@ -27,10 +13,32 @@ function ChatView({ selectedChannel }) {
   useEffect(() => {
     if (socket && selectedChannel) {
       socket.emit('join-channel', selectedChannel);
-      // Clear messages when switching channels
-      setMessages([]);
     }
   }, [socket, selectedChannel]);
+
+  // Load message history when the channel changes
+  useEffect(() => {
+    if (!selectedChannel) return;
+    let cancelled = false;
+    setMessages([]);
+
+    fetch(`${API_URL}/api/messages?channel=${encodeURIComponent(selectedChannel)}`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (cancelled) return;
+        setMessages(
+          (data.messages || []).map((msg) => ({
+            ...msg,
+            isOwn: msg.sender === displayName,
+          }))
+        );
+      })
+      .catch((error) => console.error('Error loading message history:', error));
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedChannel, displayName]);
 
   // Listen for incoming messages
   useEffect(() => {
@@ -61,7 +69,7 @@ function ChatView({ selectedChannel }) {
       socket.emit('send-message', {
         channel: selectedChannel,
         message: inputValue,
-        sender: 'You',
+        sender: displayName,
       });
 
       // Add to local state immediately (optimistic update)
@@ -69,7 +77,7 @@ function ChatView({ selectedChannel }) {
         ...prev,
         {
           id: Date.now(),
-          sender: 'You',
+          sender: displayName,
           content: inputValue,
           timestamp: 'just now',
           isOwn: true,
@@ -93,7 +101,7 @@ function ChatView({ selectedChannel }) {
       <div className="bg-gray-50 px-6 py-4 border-b border-gray-200">
         <h2 className="text-lg font-bold text-navy">{selectedChannel}</h2>
         <p className="text-xs text-gray-600">
-          {isConnected ? '✅ Connected' : '⏳ Connecting...'}
+          {isConnected ? `✅ Connected as ${displayName}` : '⏳ Connecting...'}
         </p>
       </div>
 
