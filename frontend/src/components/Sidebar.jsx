@@ -18,12 +18,19 @@ function Sidebar({
   onSelectView,
   unread,
   online,
-  displayName,
+  user,
   onStartDm,
+  onLogout,
 }) {
+  const displayName = user.name;
   const groups = channels.filter((c) => c.type !== 'dm');
   const dms = channels.filter((c) => c.type === 'dm');
   const onlineOthers = online.filter((name) => name !== displayName);
+  const views = [
+    { id: 'chat', label: '💬 Chat' },
+    { id: 'calendar', label: '📅 Events' },
+    ...(user.isAdmin ? [{ id: 'admin', label: '⚙️ Admin' }] : []),
+  ];
 
   return (
     <aside className="w-72 h-full bg-white border-r border-gray-200 flex flex-col overflow-hidden shadow-subtle md:m-5 md:rounded-lg">
@@ -36,10 +43,19 @@ function Sidebar({
           >
             <span className="font-bold text-sm">{displayName.charAt(0).toUpperCase()}</span>
           </div>
-          <div className="min-w-0">
+          <div className="min-w-0 flex-1">
             <p className="font-semibold text-sm truncate">{displayName}</p>
-            <p className="text-xs opacity-90">Member</p>
+            <p className="text-xs opacity-90 truncate">
+              {[user.title, user.company].filter(Boolean).join(' • ') || 'Member'}
+            </p>
           </div>
+          <button
+            onClick={onLogout}
+            className="text-xs opacity-70 hover:opacity-100 underline flex-shrink-0"
+            title="Sign out"
+          >
+            Logout
+          </button>
         </div>
         <div className="text-xs opacity-80 flex items-center gap-1.5">
           <span className="w-2 h-2 bg-green-400 rounded-full"></span>
@@ -50,11 +66,7 @@ function Sidebar({
       {/* View Switcher */}
       <div className="px-4 py-3 border-b border-gray-200 bg-gray-50">
         <div className="flex gap-1">
-          {[
-            { id: 'chat', label: '💬 Chat' },
-            { id: 'calendar', label: '📅 Events' },
-            { id: 'admin', label: '⚙️ Admin' },
-          ].map((view) => (
+          {views.map((view) => (
             <button
               key={view.id}
               onClick={() => onSelectView(view.id)}

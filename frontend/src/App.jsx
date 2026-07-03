@@ -4,10 +4,31 @@ import Sidebar from './components/Sidebar';
 import ChatView from './views/ChatView';
 import CalendarView from './views/CalendarView';
 import AdminView from './views/AdminView';
-import { API_URL, getDisplayName, channelLabel } from './config';
+import AuthView from './views/AuthView';
+import { channelLabel } from './config';
+import { loadAuth, saveAuth, clearAuth, authFetch } from './api';
 import { useSocket } from './hooks/useSocket';
 
 function App() {
+  const [auth, setAuth] = useState(loadAuth);
+
+  const handleAuthed = (nextAuth) => {
+    saveAuth(nextAuth);
+    setAuth(nextAuth);
+  };
+
+  const handleLogout = () => {
+    clearAuth();
+    setAuth(null);
+  };
+
+  if (!auth) {
+    return <AuthView onAuthed={handleAuthed} />;
+  }
+  return <Workspace user={auth.user} token={auth.token} onLogout={handleLogout} />;
+}
+
+function Workspace({ user, token, onLogout }) {
   const [currentView, setCurrentView] = useState('chat');
   const [channels, setChannels] = useState([]);
   const [selectedChannel, setSelectedChannel] = useState(null); // channel name
@@ -15,18 +36,14 @@ function App() {
   const [online, setOnline] = useState([]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [displayName] = useState(getDisplayName);
-  const { socket, isConnected } = useSocket();
+  const { socket, isConnected } = useSocket(token);
 
   const selectedRef = useRef(selectedChannel);
   selectedRef.current = selectedChannel;
 
   const fetchChannels = useCallback(async () => {
     try {
-      const response = await fetch(
-        `${API_URL}/api/channels?member=${encodeURIComponent(displayName)}`
-      );
-      const data = await response.json();
+      const data = await authFetch('/api/channels');
       const list = data.channels || [];
       setChannels(list);
       setSelectedChannel((current) => {
@@ -39,25 +56,24 @@ function App() {
     } finally {
       setLoading(false);
     }
-  }, [displayName]);
+  }, []);
 
   useEffect(() => {
     fetchChannels();
   }, [fetchChannels]);
 
-  // Identify + join all channel rooms (re-runs on reconnect)
+  // Join all channel rooms (re-runs on reconnect)
   useEffect(() => {
     if (!socket) return;
-    const register = () => {
-      socket.emit('identify', displayName);
+    const joinAll = () => {
       if (channels.length > 0) {
         socket.emit('join-channels', channels.map((c) => c.name));
       }
     };
-    if (socket.connected) register();
-    socket.on('connect', register);
-    return () => socket.off('connect', register);
-  }, [socket, channels, displayName]);
+    if (socket.connected) joinAll();
+    socket.on('connect', joinAll);
+    return () => socket.off('connect', joinAll);
+  }, [socket, channels]);
 
   // Global listeners: unread counts, notifications, presence, live channel list
   useEffect(() => {
@@ -100,12 +116,10 @@ function App() {
 
   const handleStartDm = async (otherName) => {
     try {
-      const response = await fetch(`${API_URL}/api/dms`, {
+      const data = await authFetch('/api/dms', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ participants: [displayName, otherName] }),
+        body: JSON.stringify({ to: otherName }),
       });
-      const data = await response.json();
       if (data.channel) {
         await fetchChannels();
         handleSelectChannel(data.channel.name);
@@ -178,8 +192,9 @@ function App() {
             }}
             unread={unread}
             online={online}
-            displayName={displayName}
+            user={user}
             onStartDm={handleStartDm}
+            onLogout={onLogout}
           />
         </div>
 
@@ -190,9 +205,9 @@ function App() {
               socket={socket}
               isConnected={isConnected}
               selectedChannel={selectedChannel}
-              channelLabel={channelLabel(selected, displayName)}
+              channelLabel={channelLabel(selected, user.name)}
               isDm={selected.type === 'dm'}
-              displayName={displayName}
+              user={user}
               online={online}
             />
           )}
@@ -201,8 +216,8 @@ function App() {
               No channels yet — ask an admin to create one.
             </div>
           )}
-          {currentView === 'calendar' && <CalendarView />}
-          {currentView === 'admin' && <AdminView />}
+          {currentView === 'calendar' && <CalendarView user={user} />}
+          {currentView === 'admin' && user.isAdmin && <AdminView />}
         </div>
       </div>
     </div>

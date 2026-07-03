@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { API_URL } from '../config';
+import { authFetch } from '../api';
 
 const formatEventDate = (iso) =>
   new Date(iso).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
@@ -7,46 +7,36 @@ const formatEventDate = (iso) =>
 const formatEventTime = (iso) =>
   new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
 
-const loadRegistrations = () => {
+const registrationsKey = (email) => `reintel_registrations_${email}`;
+
+const loadRegistrations = (email) => {
   try {
-    return JSON.parse(localStorage.getItem('reintel_registrations') || '[]');
+    return JSON.parse(localStorage.getItem(registrationsKey(email)) || '[]');
   } catch {
     return [];
   }
 };
 
-function CalendarView() {
+function CalendarView({ user }) {
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [email, setEmail] = useState(() => localStorage.getItem('reintel_email') || '');
-  const [registrations, setRegistrations] = useState(loadRegistrations);
+  const [registrations, setRegistrations] = useState(() => loadRegistrations(user.email));
   const [error, setError] = useState(null);
 
   useEffect(() => {
-    fetch(`${API_URL}/api/events`)
-      .then((res) => res.json())
+    authFetch('/api/events')
       .then((data) => setEvents(data.events || []))
       .catch((err) => console.error('Error fetching events:', err))
       .finally(() => setLoading(false));
   }, []);
 
   const handleRegister = async (event) => {
-    if (!email.trim()) {
-      setError('Enter your email above to register for events.');
-      return;
-    }
     setError(null);
-    localStorage.setItem('reintel_email', email.trim());
     try {
-      const res = await fetch(`${API_URL}/api/events/${event.id}/register`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: email.trim() }),
-      });
-      if (!res.ok) throw new Error(`Request failed (${res.status})`);
+      await authFetch(`/api/events/${event.id}/register`, { method: 'POST' });
       const next = [...new Set([...registrations, event.id])];
       setRegistrations(next);
-      localStorage.setItem('reintel_registrations', JSON.stringify(next));
+      localStorage.setItem(registrationsKey(user.email), JSON.stringify(next));
       setEvents((prev) =>
         prev.map((e) =>
           e.id === event.id && !registrations.includes(event.id)
@@ -70,18 +60,6 @@ function CalendarView() {
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-6 space-y-6">
-        {/* Email for registrations */}
-        <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 flex flex-col md:flex-row md:items-center gap-2">
-          <label className="text-xs text-gray-600 flex-shrink-0">Your email (for registrations):</label>
-          <input
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            placeholder="you@company.com"
-            className="flex-1 px-3 py-2 text-xs border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue focus:ring-opacity-50"
-          />
-        </div>
-
         {error && (
           <div className="bg-red-50 border border-red-200 text-red-700 text-xs rounded-lg px-4 py-3">
             {error}

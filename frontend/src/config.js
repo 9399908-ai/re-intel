@@ -3,17 +3,6 @@
 export const API_URL =
   process.env.REACT_APP_API_URL || 'https://re-intel-production.up.railway.app';
 
-// Display name for chat until real auth lands — persisted per browser so two
-// windows show as different members.
-export function getDisplayName() {
-  let name = localStorage.getItem('reintel_display_name');
-  if (!name) {
-    name = `Guest-${Math.floor(1000 + Math.random() * 9000)}`;
-    localStorage.setItem('reintel_display_name', name);
-  }
-  return name;
-}
-
 // Deterministic avatar color per member name (WhatsApp-style)
 const AVATAR_COLORS = [
   '#4F46E5', '#0891B2', '#059669', '#D97706',

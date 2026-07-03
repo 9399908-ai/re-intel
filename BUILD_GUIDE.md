@@ -19,7 +19,7 @@ resets on every backend restart.
 
 ---
 
-## Phase 5 — Authentication & Accounts 🔨 NEXT
+## Phase 5 — Authentication & Accounts ✅
 
 *The foundation. Admin controls and the WhatsApp feel both need real identity.*
 
@@ -123,7 +123,7 @@ New schema: `MessageRead`, `MessageReaction`, `Message.replyToId`,
 
 ---
 
-## Phase 9 — Polish & Monetization ⬜
+## Phase 9 — Polish & Monetization 🔨 NEXT
 
 - **Image/file attachments** in chat (Cloudinary or S3 presigned uploads)
 - **Email (SendGrid)**: approval notification, match introduction, event

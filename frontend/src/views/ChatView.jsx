@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { API_URL, avatarColor } from '../config';
+import { avatarColor } from '../config';
+import { authFetch } from '../api';
 
 const REACTION_EMOJIS = ['👍', '❤️', '😂', '🎉'];
 const GROUP_WINDOW_MS = 5 * 60 * 1000;
@@ -28,7 +29,8 @@ function Avatar({ name, size = 8 }) {
   );
 }
 
-function ChatView({ socket, isConnected, selectedChannel, channelLabel, isDm, displayName, online }) {
+function ChatView({ socket, isConnected, selectedChannel, channelLabel, isDm, user, online }) {
+  const displayName = user.name;
   const [messages, setMessages] = useState([]);
   const [inputValue, setInputValue] = useState('');
   const [replyingTo, setReplyingTo] = useState(null);
@@ -45,8 +47,7 @@ function ChatView({ socket, isConnected, selectedChannel, channelLabel, isDm, di
     setReplyingTo(null);
     setTypingUsers({});
 
-    fetch(`${API_URL}/api/messages?channel=${encodeURIComponent(selectedChannel)}`)
-      .then((res) => res.json())
+    authFetch(`/api/messages?channel=${encodeURIComponent(selectedChannel)}`)
       .then((data) => {
         if (cancelled) return;
         setMessages(
@@ -132,17 +133,17 @@ function ChatView({ socket, isConnected, selectedChannel, channelLabel, isDm, di
 
   const emitTypingStop = useCallback(() => {
     if (typingEmitRef.current.active && socket) {
-      socket.emit('typing', { channel: selectedChannel, sender: displayName, isTyping: false });
+      socket.emit('typing', { channel: selectedChannel, isTyping: false });
       typingEmitRef.current.active = false;
     }
     clearTimeout(typingEmitRef.current.timer);
-  }, [socket, selectedChannel, displayName]);
+  }, [socket, selectedChannel]);
 
   const handleInputChange = (e) => {
     setInputValue(e.target.value);
     if (!socket) return;
     if (!typingEmitRef.current.active) {
-      socket.emit('typing', { channel: selectedChannel, sender: displayName, isTyping: true });
+      socket.emit('typing', { channel: selectedChannel, isTyping: true });
       typingEmitRef.current.active = true;
     }
     clearTimeout(typingEmitRef.current.timer);
@@ -164,7 +165,6 @@ function ChatView({ socket, isConnected, selectedChannel, channelLabel, isDm, di
     socket.emit('send-message', {
       channel: selectedChannel,
       message: inputValue,
-      sender: displayName,
       replyTo: replySnapshot,
       tempId,
     });
@@ -200,15 +200,14 @@ function ChatView({ socket, isConnected, selectedChannel, channelLabel, isDm, di
       channel: selectedChannel,
       messageId: msg.id,
       emoji,
-      reactor: displayName,
     });
   };
 
   const handleDelete = async (msg) => {
     if (typeof msg.id !== 'number') return;
     try {
-      await fetch(
-        `${API_URL}/api/messages/${msg.id}?channel=${encodeURIComponent(selectedChannel)}`,
+      await authFetch(
+        `/api/messages/${msg.id}?channel=${encodeURIComponent(selectedChannel)}`,
         { method: 'DELETE' }
       );
       // removal happens via the message-deleted broadcast
@@ -308,7 +307,7 @@ function ChatView({ socket, isConnected, selectedChannel, channelLabel, isDm, di
                       >
                         ↩
                       </button>
-                      {msg.isOwn && (
+                      {(msg.isOwn || user.isAdmin) && (
                         <button
                           onClick={() => handleDelete(msg)}
                           className="text-xs text-gray-500 hover:text-red-500 px-1"

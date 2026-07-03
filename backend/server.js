@@ -4,6 +4,16 @@ import http from 'http';
 import { Server as SocketIOServer } from 'socket.io';
 import dotenv from 'dotenv';
 import { suggestMatches } from './matching.js';
+import {
+  hashPassword,
+  hashPasswordSync,
+  verifyPassword,
+  signToken,
+  verifyToken,
+  sanitizeUser,
+  requireAuth,
+  requireAdmin,
+} from './auth.js';
 
 dotenv.config();
 
@@ -11,6 +21,11 @@ const ALLOWED_ORIGINS = [
   'https://re-intel.vercel.app',
   'http://localhost:3000',
 ];
+
+// Bootstrap admin — override via env on Railway (Settings -> Variables)
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'admin@re-intel.ai';
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'reintel-admin-2026';
+const ADMIN_NAME = process.env.ADMIN_NAME || 'Re-Intel Admin';
 
 // ---------------------------------------------------------------------------
 // Database (optional) — when DATABASE_URL is missing or unreachable the server
@@ -29,7 +44,8 @@ if (process.env.DATABASE_URL) {
   }
 }
 
-// In-memory fallback store
+// In-memory fallback store (sample members use password "password123")
+const samplePassword = hashPasswordSync('password123');
 const memory = {
   channels: [
     { id: 1, name: 'TRD NYC Management', description: null, type: 'group', dmParticipants: [] },
@@ -42,37 +58,75 @@ const memory = {
   messages: new Map(), // channel name -> [{ id, sender, content, createdAt, replyTo, reactions }]
   nextMessageId: 1,
   users: [
-    { id: 1, name: 'Marcus Lee', email: 'marcus@example.com', title: 'Broker', company: 'Lee & Associates', role: 'broker', markets: ['NYC', 'NJ'], assetTypes: ['multifamily', 'office'], verified: true },
-    { id: 2, name: 'Sarah Chen', email: 'sarah@example.com', title: 'Owner', company: 'Chen Properties', role: 'owner', markets: ['NYC'], assetTypes: ['multifamily'], verified: true },
-    { id: 3, name: 'Robert Martinez', email: 'robert@example.com', title: 'Vendor', company: 'Property Solutions', role: 'vendor', markets: ['NYC', 'Boston'], assetTypes: ['office', 'industrial'], verified: true },
-    { id: 4, name: 'John Smith', email: 'john@example.com', title: 'Broker', company: 'Smith Realty', role: 'broker', markets: ['NJ'], assetTypes: ['multifamily'], verified: false },
-    { id: 5, name: 'Alice Johnson', email: 'alice@example.com', title: 'Vendor', company: 'Property Solutions', role: 'vendor', markets: ['Boston'], assetTypes: ['office'], verified: false },
+    { id: 1, name: 'Marcus Lee', email: 'marcus@example.com', phone: '+1-555-0101', passwordHash: samplePassword, isAdmin: false, title: 'Broker', company: 'Lee & Associates', role: 'broker', markets: ['NYC', 'NJ'], assetTypes: ['multifamily', 'office'], verified: true },
+    { id: 2, name: 'Sarah Chen', email: 'sarah@example.com', phone: '+1-555-0102', passwordHash: samplePassword, isAdmin: false, title: 'Owner', company: 'Chen Properties', role: 'owner', markets: ['NYC'], assetTypes: ['multifamily'], verified: true },
+    { id: 3, name: 'Robert Martinez', email: 'robert@example.com', phone: '+1-555-0103', passwordHash: samplePassword, isAdmin: false, title: 'Vendor', company: 'Property Solutions', role: 'vendor', markets: ['NYC', 'Boston'], assetTypes: ['office', 'industrial'], verified: true },
   ],
+  nextUserId: 4,
   events: [
     { id: 1, title: 'Re-Deal NYC Mixer', description: 'Networking mixer for NYC members', startDate: '2026-07-12T18:00:00.000Z', endDate: '2026-07-12T21:00:00.000Z', location: 'Marriott, Midtown', capacity: 100, price: 0, registered: 42 },
     { id: 2, title: 'Refinance Workshop', description: 'Cap stack strategies in the current rate environment', startDate: '2026-07-20T14:00:00.000Z', endDate: '2026-07-20T16:00:00.000Z', location: 'Virtual', capacity: 50, price: 0, registered: 28 },
     { id: 3, title: 'TRD NYC Management Monthly Standup', description: 'Monthly community standup', startDate: '2026-07-22T10:00:00.000Z', endDate: '2026-07-22T11:00:00.000Z', location: 'Zoom', capacity: 200, price: 0, registered: 15 },
   ],
   nextEventId: 4,
-  matches: [], // { id, user1Id, user2Id, status }
+  matches: [],
   nextMatchId: 1,
 };
 
 async function seedIfEmpty() {
-  if (!prisma) return;
-  const channelCount = await prisma.channel.count();
-  if (channelCount === 0) {
-    await prisma.channel.createMany({
-      data: memory.channels.map(({ name }) => ({ name })),
+  if (prisma) {
+    const channelCount = await prisma.channel.count();
+    if (channelCount === 0) {
+      await prisma.channel.createMany({
+        data: memory.channels.map(({ name }) => ({ name })),
+      });
+      console.log(`🌱 Seeded ${memory.channels.length} channels`);
+    }
+    const eventCount = await prisma.event.count();
+    if (eventCount === 0) {
+      await prisma.event.createMany({
+        data: memory.events.map(({ id, registered, ...event }) => event),
+      });
+      console.log(`🌱 Seeded ${memory.events.length} events`);
+    }
+    // Bootstrap admin account
+    await prisma.user.upsert({
+      where: { email: ADMIN_EMAIL },
+      update: { isAdmin: true, verified: true },
+      create: {
+        email: ADMIN_EMAIL,
+        phone: '+1-555-0100',
+        name: ADMIN_NAME,
+        passwordHash: await hashPassword(ADMIN_PASSWORD),
+        isAdmin: true,
+        verified: true,
+        title: 'Administrator',
+        company: 'Re-Intel.ai',
+        role: 'owner',
+        markets: [],
+        assetTypes: [],
+      },
     });
-    console.log(`🌱 Seeded ${memory.channels.length} channels`);
+  } else {
+    memory.users.push({
+      id: memory.nextUserId++,
+      name: ADMIN_NAME,
+      email: ADMIN_EMAIL,
+      phone: '+1-555-0100',
+      passwordHash: hashPasswordSync(ADMIN_PASSWORD),
+      isAdmin: true,
+      verified: true,
+      title: 'Administrator',
+      company: 'Re-Intel.ai',
+      role: 'owner',
+      markets: [],
+      assetTypes: [],
+    });
   }
-  const eventCount = await prisma.event.count();
-  if (eventCount === 0) {
-    await prisma.event.createMany({
-      data: memory.events.map(({ id, registered, ...event }) => event),
-    });
-    console.log(`🌱 Seeded ${memory.events.length} events`);
+  if (!process.env.ADMIN_PASSWORD) {
+    console.warn(`⚠️  Admin bootstrap: ${ADMIN_EMAIL} with the DEFAULT password — set ADMIN_EMAIL/ADMIN_PASSWORD env vars!`);
+  } else {
+    console.log(`👑 Admin account ready: ${ADMIN_EMAIL}`);
   }
 }
 
@@ -89,10 +143,10 @@ app.use(cors({ origin: ALLOWED_ORIGINS }));
 app.use(express.json());
 
 // ---------------------------------------------------------------------------
-// Presence — display name <-> socket tracking (real user ids arrive in Phase 5)
+// Presence
 // ---------------------------------------------------------------------------
-const nameToSockets = new Map(); // display name -> Set<socketId>
-const socketToName = new Map(); // socketId -> display name
+const nameToSockets = new Map(); // user name -> Set<socketId>
+const socketToName = new Map(); // socketId -> user name
 
 function broadcastPresence() {
   io.emit('presence', { online: [...nameToSockets.keys()] });
@@ -135,12 +189,13 @@ async function findOrCreateDm(a, b) {
   return channel;
 }
 
-async function persistMessage(channelName, payload) {
+async function persistMessage(channelName, payload, senderId = null) {
   if (prisma) {
     const saved = await prisma.message.create({
       data: {
         content: payload.content,
         senderName: payload.sender,
+        senderId,
         replyTo: payload.replyTo || undefined,
         reactions: {},
         channel: {
@@ -158,6 +213,89 @@ async function persistMessage(channelName, payload) {
   return stored.id;
 }
 
+async function findUserByEmail(email) {
+  if (prisma) return prisma.user.findUnique({ where: { email } });
+  return memory.users.find((u) => u.email === email) || null;
+}
+
+// ---------------------------------------------------------------------------
+// Auth
+// ---------------------------------------------------------------------------
+
+app.post('/api/auth/signup', async (req, res, next) => {
+  try {
+    const { name, email, phone, password, title, company, role, markets, assetTypes } = req.body;
+    if (!name?.trim() || !email?.trim() || !phone?.trim() || !password || !role) {
+      return res.status(400).json({ error: 'name, email, phone, password, and role are required' });
+    }
+    if (password.length < 8) {
+      return res.status(400).json({ error: 'password must be at least 8 characters' });
+    }
+    if (await findUserByEmail(email.trim().toLowerCase())) {
+      return res.status(409).json({ error: 'an account with this email already exists' });
+    }
+
+    const data = {
+      name: name.trim(),
+      email: email.trim().toLowerCase(),
+      phone: phone.trim(),
+      passwordHash: await hashPassword(password),
+      isAdmin: false,
+      title: title?.trim() || role,
+      company: company?.trim() || '',
+      role,
+      markets: Array.isArray(markets) ? markets : [],
+      assetTypes: Array.isArray(assetTypes) ? assetTypes : [],
+      verified: false,
+    };
+
+    let user;
+    if (prisma) {
+      user = await prisma.user.create({ data });
+    } else {
+      user = { ...data, id: memory.nextUserId++ };
+      memory.users.push(user);
+    }
+    res.status(201).json({
+      user: sanitizeUser(user),
+      message: 'Account created — an admin will review your application shortly.',
+    });
+  } catch (err) {
+    if (err.code === 'P2002') {
+      return res.status(409).json({ error: 'email or phone already registered' });
+    }
+    next(err);
+  }
+});
+
+app.post('/api/auth/login', async (req, res, next) => {
+  try {
+    const { email, password } = req.body;
+    if (!email || !password) return res.status(400).json({ error: 'email and password required' });
+
+    const user = await findUserByEmail(email.trim().toLowerCase());
+    if (!user || !(await verifyPassword(password, user.passwordHash))) {
+      return res.status(401).json({ error: 'invalid email or password' });
+    }
+    if (!user.verified) {
+      return res.status(403).json({ error: 'pending', message: 'Your membership is pending admin approval.' });
+    }
+    res.json({ token: signToken(user), user: sanitizeUser(user) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.get('/api/auth/me', requireAuth, async (req, res, next) => {
+  try {
+    const user = await findUserByEmail(req.user.email);
+    if (!user || !user.verified) return res.status(401).json({ error: 'account no longer active' });
+    res.json({ user: sanitizeUser(user) });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // ---------------------------------------------------------------------------
 // REST API
 // ---------------------------------------------------------------------------
@@ -171,16 +309,14 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// Channels: groups for everyone + DMs the requesting member participates in.
-// GET /api/channels?member=<displayName>
-app.get('/api/channels', async (req, res, next) => {
+// Channels: groups for everyone + the requesting member's DMs
+app.get('/api/channels', requireAuth, async (req, res, next) => {
   try {
-    const member = req.query.member;
     const all = prisma
       ? await prisma.channel.findMany({ orderBy: { id: 'asc' } })
       : memory.channels;
     const channels = all.filter(
-      (c) => c.type !== 'dm' || (member && c.dmParticipants.includes(member))
+      (c) => c.type !== 'dm' || c.dmParticipants.includes(req.user.name)
     );
     res.json({ channels });
   } catch (err) {
@@ -188,7 +324,7 @@ app.get('/api/channels', async (req, res, next) => {
   }
 });
 
-app.post('/api/channels', async (req, res, next) => {
+app.post('/api/channels', requireAdmin, async (req, res, next) => {
   try {
     const { name, description } = req.body;
     if (!name?.trim()) return res.status(400).json({ error: 'name required' });
@@ -211,7 +347,7 @@ app.post('/api/channels', async (req, res, next) => {
   }
 });
 
-app.patch('/api/channels/:id', async (req, res, next) => {
+app.patch('/api/channels/:id', requireAdmin, async (req, res, next) => {
   try {
     const id = Number(req.params.id);
     const { name, description } = req.body;
@@ -227,7 +363,7 @@ app.patch('/api/channels/:id', async (req, res, next) => {
         },
       });
       if (name?.trim() && existing.name !== channel.name) {
-        io.socketsLeave(existing.name); // room name changed; clients rejoin on refresh
+        io.socketsLeave(existing.name);
       }
     } else {
       channel = memory.channels.find((c) => c.id === id);
@@ -248,13 +384,13 @@ app.patch('/api/channels/:id', async (req, res, next) => {
   }
 });
 
-app.delete('/api/channels/:id', async (req, res, next) => {
+app.delete('/api/channels/:id', requireAdmin, async (req, res, next) => {
   try {
     const id = Number(req.params.id);
     if (prisma) {
       const existing = await prisma.channel.findUnique({ where: { id } });
       if (!existing) return res.status(404).json({ error: 'channel not found' });
-      await prisma.channel.delete({ where: { id } }); // messages cascade
+      await prisma.channel.delete({ where: { id } });
     } else {
       const index = memory.channels.findIndex((c) => c.id === id);
       if (index === -1) return res.status(404).json({ error: 'channel not found' });
@@ -268,23 +404,23 @@ app.delete('/api/channels/:id', async (req, res, next) => {
   }
 });
 
-// Direct messages: find or create the 1:1 channel between two display names
-app.post('/api/dms', async (req, res, next) => {
+// Direct messages: open the 1:1 channel between me and another member
+app.post('/api/dms', requireAuth, async (req, res, next) => {
   try {
-    const { participants } = req.body;
-    if (!Array.isArray(participants) || participants.length !== 2 || participants[0] === participants[1]) {
-      return res.status(400).json({ error: 'participants must be two distinct names' });
+    const { to } = req.body;
+    if (!to?.trim() || to.trim() === req.user.name) {
+      return res.status(400).json({ error: 'a different member name is required' });
     }
-    const channel = await findOrCreateDm(participants[0], participants[1]);
-    for (const name of participants) emitToUser(name, 'dm-started', { channel });
+    const channel = await findOrCreateDm(req.user.name, to.trim());
+    for (const name of channel.dmParticipants) emitToUser(name, 'dm-started', { channel });
     res.status(201).json({ channel });
   } catch (err) {
     next(err);
   }
 });
 
-// Message history: GET /api/messages?channel=<name>&before=<id>&limit=50
-app.get('/api/messages', async (req, res, next) => {
+// Message history
+app.get('/api/messages', requireAuth, async (req, res, next) => {
   try {
     const channel = req.query.channel;
     if (!channel) return res.status(400).json({ error: 'channel query param required' });
@@ -307,21 +443,30 @@ app.get('/api/messages', async (req, res, next) => {
   }
 });
 
-// Delete a message ("delete for everyone")
-app.delete('/api/messages/:id', async (req, res, next) => {
+// Delete a message — sender or admin only
+app.delete('/api/messages/:id', requireAuth, async (req, res, next) => {
   try {
     const id = Number(req.params.id);
     let channelName = req.query.channel;
+    let senderName;
     if (prisma) {
       const message = await prisma.message.findUnique({ where: { id }, include: { channel: true } });
       if (!message) return res.status(404).json({ error: 'message not found' });
       channelName = message.channel.name;
+      senderName = message.senderName;
+      if (senderName !== req.user.name && !req.user.isAdmin) {
+        return res.status(403).json({ error: 'you can only delete your own messages' });
+      }
       await prisma.message.delete({ where: { id } });
     } else {
       if (!channelName) return res.status(400).json({ error: 'channel query param required' });
       const msgs = memory.messages.get(channelName) || [];
       const index = msgs.findIndex((m) => m.id === id);
       if (index === -1) return res.status(404).json({ error: 'message not found' });
+      senderName = msgs[index].sender;
+      if (senderName !== req.user.name && !req.user.isAdmin) {
+        return res.status(403).json({ error: 'you can only delete your own messages' });
+      }
       msgs.splice(index, 1);
     }
     io.to(channelName).emit('message-deleted', { channel: channelName, id });
@@ -331,8 +476,8 @@ app.delete('/api/messages/:id', async (req, res, next) => {
   }
 });
 
-// Events CRUD
-app.get('/api/events', async (req, res, next) => {
+// Events
+app.get('/api/events', requireAuth, async (req, res, next) => {
   try {
     if (prisma) {
       const events = await prisma.event.findMany({
@@ -349,7 +494,7 @@ app.get('/api/events', async (req, res, next) => {
   }
 });
 
-app.post('/api/events', async (req, res, next) => {
+app.post('/api/events', requireAdmin, async (req, res, next) => {
   try {
     const { title, description, startDate, endDate, location, capacity, price } = req.body;
     if (!title?.trim() || !startDate) {
@@ -378,7 +523,7 @@ app.post('/api/events', async (req, res, next) => {
   }
 });
 
-app.patch('/api/events/:id', async (req, res, next) => {
+app.patch('/api/events/:id', requireAdmin, async (req, res, next) => {
   try {
     const id = Number(req.params.id);
     const { title, description, startDate, endDate, location, capacity, price } = req.body;
@@ -407,11 +552,11 @@ app.patch('/api/events/:id', async (req, res, next) => {
   }
 });
 
-app.delete('/api/events/:id', async (req, res, next) => {
+app.delete('/api/events/:id', requireAdmin, async (req, res, next) => {
   try {
     const id = Number(req.params.id);
     if (prisma) {
-      await prisma.event.delete({ where: { id } }); // registrations cascade
+      await prisma.event.delete({ where: { id } });
     } else {
       const index = memory.events.findIndex((e) => e.id === id);
       if (index === -1) return res.status(404).json({ error: 'event not found' });
@@ -423,11 +568,10 @@ app.delete('/api/events/:id', async (req, res, next) => {
   }
 });
 
-app.post('/api/events/:id/register', async (req, res, next) => {
+app.post('/api/events/:id/register', requireAuth, async (req, res, next) => {
   try {
     const eventId = Number(req.params.id);
-    const { email } = req.body;
-    if (!email) return res.status(400).json({ error: 'email required' });
+    const email = req.user.email;
 
     if (prisma) {
       const registration = await prisma.eventRegistration.upsert({
@@ -446,36 +590,35 @@ app.post('/api/events/:id/register', async (req, res, next) => {
   }
 });
 
-// Members
-app.get('/api/members/pending', async (req, res, next) => {
+// Members (admin)
+app.get('/api/members/pending', requireAdmin, async (req, res, next) => {
   try {
-    if (prisma) {
-      const pending = await prisma.user.findMany({ where: { verified: false } });
-      return res.json({ members: pending });
-    }
-    res.json({ members: memory.users.filter((u) => !u.verified) });
+    const pending = prisma
+      ? await prisma.user.findMany({ where: { verified: false } })
+      : memory.users.filter((u) => !u.verified);
+    res.json({ members: pending.map(sanitizeUser) });
   } catch (err) {
     next(err);
   }
 });
 
-app.post('/api/members/:id/approve', async (req, res, next) => {
+app.post('/api/members/:id/approve', requireAdmin, async (req, res, next) => {
   try {
     const id = Number(req.params.id);
     if (prisma) {
       const user = await prisma.user.update({ where: { id }, data: { verified: true } });
-      return res.json({ member: user });
+      return res.json({ member: sanitizeUser(user) });
     }
     const user = memory.users.find((u) => u.id === id);
     if (!user) return res.status(404).json({ error: 'member not found' });
     user.verified = true;
-    res.json({ member: user });
+    res.json({ member: sanitizeUser(user) });
   } catch (err) {
     next(err);
   }
 });
 
-app.post('/api/members/:id/deny', async (req, res, next) => {
+app.post('/api/members/:id/deny', requireAdmin, async (req, res, next) => {
   try {
     const id = Number(req.params.id);
     if (prisma) {
@@ -491,7 +634,7 @@ app.post('/api/members/:id/deny', async (req, res, next) => {
   }
 });
 
-app.get('/api/stats', async (req, res, next) => {
+app.get('/api/stats', requireAdmin, async (req, res, next) => {
   try {
     if (prisma) {
       const [members, messages, matches] = await Promise.all([
@@ -515,20 +658,19 @@ app.get('/api/stats', async (req, res, next) => {
   }
 });
 
-// Matching
-app.get('/api/matches/suggestions', async (req, res, next) => {
+// Matching (admin)
+app.get('/api/matches/suggestions', requireAdmin, async (req, res, next) => {
   try {
     const users = prisma
-      ? await prisma.user.findMany({ where: { verified: true } })
-      : memory.users.filter((u) => u.verified);
+      ? await prisma.user.findMany({ where: { verified: true, isAdmin: false } })
+      : memory.users.filter((u) => u.verified && !u.isAdmin);
     res.json({ suggestions: suggestMatches(users) });
   } catch (err) {
     next(err);
   }
 });
 
-// Introduce two members: record the match and open a DM with an intro message
-app.post('/api/matches/introduce', async (req, res, next) => {
+app.post('/api/matches/introduce', requireAdmin, async (req, res, next) => {
   try {
     const user1Id = Number(req.body.user1Id);
     const user2Id = Number(req.body.user2Id);
@@ -573,19 +715,28 @@ app.post('/api/matches/introduce', async (req, res, next) => {
 });
 
 // ---------------------------------------------------------------------------
-// Socket.io — real-time chat, presence, typing, reactions
+// Socket.io — JWT-authenticated real-time chat
 // ---------------------------------------------------------------------------
 
-io.on('connection', (socket) => {
-  console.log(`✅ Socket connected: ${socket.id}`);
+io.use((socket, next) => {
+  try {
+    const token = socket.handshake.auth?.token;
+    if (!token) return next(new Error('unauthorized'));
+    socket.data.user = verifyToken(token);
+    next();
+  } catch {
+    next(new Error('unauthorized'));
+  }
+});
 
-  socket.on('identify', (name) => {
-    if (!name) return;
-    socketToName.set(socket.id, name);
-    if (!nameToSockets.has(name)) nameToSockets.set(name, new Set());
-    nameToSockets.get(name).add(socket.id);
-    broadcastPresence();
-  });
+io.on('connection', (socket) => {
+  const user = socket.data.user;
+  console.log(`✅ ${user.name} connected (${socket.id})`);
+
+  socketToName.set(socket.id, user.name);
+  if (!nameToSockets.has(user.name)) nameToSockets.set(user.name, new Set());
+  nameToSockets.get(user.name).add(socket.id);
+  broadcastPresence();
 
   socket.on('join-channels', (channelNames) => {
     if (!Array.isArray(channelNames)) return;
@@ -600,17 +751,17 @@ io.on('connection', (socket) => {
     socket.leave(channel);
   });
 
-  socket.on('typing', ({ channel, sender, isTyping }) => {
-    if (!channel || !sender) return;
-    socket.to(channel).emit('typing', { channel, sender, isTyping: !!isTyping });
+  socket.on('typing', ({ channel, isTyping }) => {
+    if (!channel) return;
+    socket.to(channel).emit('typing', { channel, sender: user.name, isTyping: !!isTyping });
   });
 
   socket.on('send-message', async (data) => {
-    const { channel, message, sender, replyTo } = data;
+    const { channel, message, replyTo } = data;
     if (!channel || !message) return;
 
     const payload = {
-      sender: sender || 'Member',
+      sender: user.name,
       content: message,
       createdAt: new Date().toISOString(),
       replyTo: replyTo || null,
@@ -618,19 +769,19 @@ io.on('connection', (socket) => {
     };
 
     try {
-      payload.id = await persistMessage(channel, payload);
+      payload.id = await persistMessage(channel, payload, user.id);
     } catch (err) {
       console.error('Failed to persist message:', err.message);
       payload.id = Date.now();
     }
 
-    // Sender already rendered it optimistically; confirm the real id to them
     socket.to(channel).emit('receive-message', { ...payload, channel, isOwn: false });
     socket.emit('message-saved', { channel, id: payload.id, tempId: data.tempId || null });
   });
 
-  socket.on('react-message', async ({ channel, messageId, emoji, reactor }) => {
-    if (!channel || !messageId || !emoji || !reactor) return;
+  socket.on('react-message', async ({ channel, messageId, emoji }) => {
+    if (!channel || !messageId || !emoji) return;
+    const reactor = user.name;
     try {
       let reactions;
       if (prisma) {
@@ -659,15 +810,14 @@ io.on('connection', (socket) => {
   });
 
   socket.on('disconnect', () => {
-    const name = socketToName.get(socket.id);
     socketToName.delete(socket.id);
-    if (name && nameToSockets.has(name)) {
-      const sockets = nameToSockets.get(name);
+    if (nameToSockets.has(user.name)) {
+      const sockets = nameToSockets.get(user.name);
       sockets.delete(socket.id);
-      if (sockets.size === 0) nameToSockets.delete(name);
+      if (sockets.size === 0) nameToSockets.delete(user.name);
       broadcastPresence();
     }
-    console.log(`❌ Socket disconnected: ${socket.id}`);
+    console.log(`❌ ${user.name} disconnected (${socket.id})`);
   });
 });
 

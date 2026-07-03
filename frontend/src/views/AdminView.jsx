@@ -1,20 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { API_URL } from '../config';
+import { authFetch as api } from '../api';
 
 const formatEventDate = (iso) =>
   new Date(iso).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
 
 const formatEventTime = (iso) =>
   new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
-
-const api = (path, options) =>
-  fetch(`${API_URL}${path}`, {
-    headers: { 'Content-Type': 'application/json' },
-    ...options,
-  }).then((res) => {
-    if (!res.ok) throw new Error(`Request failed (${res.status})`);
-    return res.json();
-  });
 
 function SectionHeader({ title, subtitle }) {
   return (
