@@ -7,7 +7,7 @@ Phases are ordered by dependency: auth unblocks everything else.
 
 ---
 
-## Phase 0 — Prerequisite (5 minutes, do this first) 🔨
+## Phase 0 — Prerequisite ✅
 
 **Attach PostgreSQL on Railway.** Until then, all data (messages, approvals)
 resets on every backend restart.
@@ -19,7 +19,7 @@ resets on every backend restart.
 
 ---
 
-## Phase 5 — Authentication & Accounts 🔨
+## Phase 5 — Authentication & Accounts 🔨 NEXT
 
 *The foundation. Admin controls and the WhatsApp feel both need real identity.*
 
@@ -52,7 +52,7 @@ resets on every backend restart.
 
 ---
 
-## Phase 6 — Community Management (Admin Power Tools) ⬜
+## Phase 6 — Community Management (Admin Power Tools) ✅
 
 *Admin can actually run the platform.*
 
@@ -82,7 +82,7 @@ resets on every backend restart.
 
 ---
 
-## Phase 7 — WhatsApp-Feel Chat Upgrade ⬜
+## Phase 7 — WhatsApp-Feel Chat Upgrade ✅ (read receipts & infinite scroll deferred)
 
 *The biggest UX gap. Roughly in order of impact:*
 
@@ -106,7 +106,7 @@ New schema: `MessageRead`, `MessageReaction`, `Message.replyToId`,
 
 ---
 
-## Phase 8 — Direct Messages + Matching Loop ⬜
+## Phase 8 — Direct Messages + Matching Loop ✅ (weekly cron & feedback loop deferred)
 
 *Turn the matching engine from a demo into the core value prop.*
 

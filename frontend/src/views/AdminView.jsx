@@ -7,28 +7,59 @@ const formatEventDate = (iso) =>
 const formatEventTime = (iso) =>
   new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
 
+const api = (path, options) =>
+  fetch(`${API_URL}${path}`, {
+    headers: { 'Content-Type': 'application/json' },
+    ...options,
+  }).then((res) => {
+    if (!res.ok) throw new Error(`Request failed (${res.status})`);
+    return res.json();
+  });
+
+function SectionHeader({ title, subtitle }) {
+  return (
+    <div className="mb-4">
+      <h3 className="text-sm font-bold text-navy uppercase tracking-wide">{title}</h3>
+      {subtitle && <p className="text-xs text-gray-600 mt-1">{subtitle}</p>}
+    </div>
+  );
+}
+
 function AdminView() {
+  const [channels, setChannels] = useState([]);
   const [pendingMembers, setPendingMembers] = useState([]);
   const [events, setEvents] = useState([]);
   const [stats, setStats] = useState({ members: 0, messages: 0, matches: 0 });
   const [matchSuggestions, setMatchSuggestions] = useState([]);
+  const [introduced, setIntroduced] = useState({}); // "u1-u2" -> true
   const [loading, setLoading] = useState(true);
-  const [actionError, setActionError] = useState(null);
+  const [error, setError] = useState(null);
+
+  // Forms
+  const [newChannel, setNewChannel] = useState({ name: '', description: '' });
+  const [editingChannelId, setEditingChannelId] = useState(null);
+  const [editingChannelName, setEditingChannelName] = useState('');
+  const [newEvent, setNewEvent] = useState({ title: '', startDate: '', location: '', capacity: '' });
+  const [editingEventId, setEditingEventId] = useState(null);
+  const [editingEvent, setEditingEvent] = useState({});
 
   const loadData = useCallback(async () => {
     try {
-      const [membersRes, eventsRes, statsRes, matchesRes] = await Promise.all([
-        fetch(`${API_URL}/api/members/pending`).then((r) => r.json()),
-        fetch(`${API_URL}/api/events`).then((r) => r.json()),
-        fetch(`${API_URL}/api/stats`).then((r) => r.json()),
-        fetch(`${API_URL}/api/matches/suggestions`).then((r) => r.json()),
+      const [channelsRes, membersRes, eventsRes, statsRes, matchesRes] = await Promise.all([
+        api('/api/channels'),
+        api('/api/members/pending'),
+        api('/api/events'),
+        api('/api/stats'),
+        api('/api/matches/suggestions'),
       ]);
+      setChannels((channelsRes.channels || []).filter((c) => c.type !== 'dm'));
       setPendingMembers(membersRes.members || []);
       setEvents(eventsRes.events || []);
       setStats(statsRes.stats || { members: 0, messages: 0, matches: 0 });
       setMatchSuggestions(matchesRes.suggestions || []);
-    } catch (error) {
-      console.error('Error loading admin data:', error);
+    } catch (err) {
+      console.error('Error loading admin data:', err);
+      setError('Could not load admin data.');
     } finally {
       setLoading(false);
     }
@@ -38,17 +69,92 @@ function AdminView() {
     loadData();
   }, [loadData]);
 
-  const handleMemberAction = async (id, action) => {
-    setActionError(null);
+  const run = async (fn, failMessage) => {
+    setError(null);
     try {
-      const res = await fetch(`${API_URL}/api/members/${id}/${action}`, { method: 'POST' });
-      if (!res.ok) throw new Error(`Request failed (${res.status})`);
-      setPendingMembers((prev) => prev.filter((m) => m.id !== id));
-    } catch (error) {
-      console.error(`Error on ${action}:`, error);
-      setActionError(`Could not ${action} member. Please try again.`);
+      await fn();
+    } catch (err) {
+      console.error(failMessage, err);
+      setError(failMessage);
     }
   };
+
+  // Channel actions
+  const createChannel = () =>
+    run(async () => {
+      if (!newChannel.name.trim()) return;
+      const { channel } = await api('/api/channels', {
+        method: 'POST',
+        body: JSON.stringify(newChannel),
+      });
+      setChannels((prev) => [...prev, channel]);
+      setNewChannel({ name: '', description: '' });
+    }, 'Could not create channel.');
+
+  const renameChannel = (id) =>
+    run(async () => {
+      if (!editingChannelName.trim()) return;
+      const { channel } = await api(`/api/channels/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ name: editingChannelName }),
+      });
+      setChannels((prev) => prev.map((c) => (c.id === id ? channel : c)));
+      setEditingChannelId(null);
+    }, 'Could not rename channel.');
+
+  const deleteChannel = (id) =>
+    run(async () => {
+      await api(`/api/channels/${id}`, { method: 'DELETE' });
+      setChannels((prev) => prev.filter((c) => c.id !== id));
+    }, 'Could not delete channel.');
+
+  // Member actions
+  const memberAction = (id, action) =>
+    run(async () => {
+      await api(`/api/members/${id}/${action}`, { method: 'POST' });
+      setPendingMembers((prev) => prev.filter((m) => m.id !== id));
+    }, `Could not ${action} member.`);
+
+  // Match actions
+  const introduce = (match) =>
+    run(async () => {
+      await api('/api/matches/introduce', {
+        method: 'POST',
+        body: JSON.stringify({ user1Id: match.userId, user2Id: match.matchedUserId }),
+      });
+      setIntroduced((prev) => ({ ...prev, [`${match.userId}-${match.matchedUserId}`]: true }));
+      setStats((prev) => ({ ...prev, matches: prev.matches + 1 }));
+    }, 'Could not create introduction.');
+
+  // Event actions
+  const createEvent = () =>
+    run(async () => {
+      if (!newEvent.title.trim() || !newEvent.startDate) return;
+      const { event } = await api('/api/events', {
+        method: 'POST',
+        body: JSON.stringify(newEvent),
+      });
+      setEvents((prev) =>
+        [...prev, event].sort((a, b) => new Date(a.startDate) - new Date(b.startDate))
+      );
+      setNewEvent({ title: '', startDate: '', location: '', capacity: '' });
+    }, 'Could not create event.');
+
+  const saveEvent = (id) =>
+    run(async () => {
+      const { event } = await api(`/api/events/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(editingEvent),
+      });
+      setEvents((prev) => prev.map((e) => (e.id === id ? { ...e, ...event } : e)));
+      setEditingEventId(null);
+    }, 'Could not update event.');
+
+  const deleteEvent = (id) =>
+    run(async () => {
+      await api(`/api/events/${id}`, { method: 'DELETE' });
+      setEvents((prev) => prev.filter((e) => e.id !== id));
+    }, 'Could not delete event.');
 
   if (loading) {
     return (
@@ -58,51 +164,131 @@ function AdminView() {
     );
   }
 
+  const inputCls =
+    'px-3 py-2 text-xs border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue focus:ring-opacity-50';
+
   return (
     <div className="flex flex-col h-full">
-      {/* Header */}
       <div className="bg-gray-50 px-6 py-4 border-b border-gray-200">
         <h2 className="text-lg font-bold text-navy">Admin Panel</h2>
-        <p className="text-xs text-gray-600">Manage members, events, and community</p>
+        <p className="text-xs text-gray-600">Manage channels, members, events, and matches</p>
       </div>
 
-      {/* Content */}
       <div className="flex-1 overflow-y-auto p-6 space-y-8">
-        {actionError && (
+        {error && (
           <div className="bg-red-50 border border-red-200 text-red-700 text-xs rounded-lg px-4 py-3">
-            {actionError}
+            {error}
           </div>
         )}
 
+        {/* Channel Management */}
+        <section>
+          <SectionHeader title="Channels" subtitle={`${channels.length} communities`} />
+          <div className="space-y-2 mb-3">
+            {channels.map((channel) => (
+              <div
+                key={channel.id}
+                className="bg-white border border-gray-200 rounded-lg px-4 py-3 flex items-center gap-2"
+              >
+                {editingChannelId === channel.id ? (
+                  <>
+                    <input
+                      value={editingChannelName}
+                      onChange={(e) => setEditingChannelName(e.target.value)}
+                      className={`${inputCls} flex-1`}
+                      autoFocus
+                    />
+                    <button
+                      onClick={() => renameChannel(channel.id)}
+                      className="px-3 py-1.5 text-xs bg-blue text-white rounded hover:opacity-90"
+                    >
+                      Save
+                    </button>
+                    <button
+                      onClick={() => setEditingChannelId(null)}
+                      className="px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-100 rounded"
+                    >
+                      Cancel
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-semibold text-sm text-navy truncate">{channel.name}</p>
+                      {channel.description && (
+                        <p className="text-xs text-gray-600 truncate">{channel.description}</p>
+                      )}
+                    </div>
+                    <button
+                      onClick={() => {
+                        setEditingChannelId(channel.id);
+                        setEditingChannelName(channel.name);
+                      }}
+                      className="px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-100 rounded"
+                    >
+                      Rename
+                    </button>
+                    <button
+                      onClick={() => deleteChannel(channel.id)}
+                      className="px-3 py-1.5 text-xs text-red-500 hover:bg-red-50 rounded"
+                    >
+                      Delete
+                    </button>
+                  </>
+                )}
+              </div>
+            ))}
+          </div>
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 flex flex-col md:flex-row gap-2">
+            <input
+              placeholder="New channel name"
+              value={newChannel.name}
+              onChange={(e) => setNewChannel((c) => ({ ...c, name: e.target.value }))}
+              className={`${inputCls} flex-1`}
+            />
+            <input
+              placeholder="Description (optional)"
+              value={newChannel.description}
+              onChange={(e) => setNewChannel((c) => ({ ...c, description: e.target.value }))}
+              className={`${inputCls} flex-1`}
+            />
+            <button
+              onClick={createChannel}
+              disabled={!newChannel.name.trim()}
+              className="px-4 py-2 text-xs bg-blue text-white rounded-lg hover:opacity-90 disabled:bg-gray-300"
+            >
+              + Create Channel
+            </button>
+          </div>
+        </section>
+
         {/* Pending Verifications */}
         <section>
-          <div className="mb-4">
-            <h3 className="text-sm font-bold text-navy uppercase tracking-wide">Pending Member Verification</h3>
-            <p className="text-xs text-gray-600 mt-1">{pendingMembers.length} members awaiting approval</p>
-          </div>
+          <SectionHeader
+            title="Pending Member Verification"
+            subtitle={`${pendingMembers.length} members awaiting approval`}
+          />
           {pendingMembers.length === 0 ? (
             <p className="text-sm text-gray-500">No members awaiting approval</p>
           ) : (
             <div className="space-y-3">
               {pendingMembers.map((member) => (
                 <div key={member.id} className="bg-white border border-gray-200 rounded-lg p-4">
-                  <div className="flex justify-between items-start mb-3">
-                    <div className="flex-1">
-                      <p className="font-semibold text-sm text-navy">{member.name}</p>
-                      <p className="text-xs text-gray-600">{member.email}</p>
-                      <p className="text-xs text-gray-600">{member.title} • {member.company}</p>
-                    </div>
+                  <div className="mb-3">
+                    <p className="font-semibold text-sm text-navy">{member.name}</p>
+                    <p className="text-xs text-gray-600">{member.email}</p>
+                    <p className="text-xs text-gray-600">{member.title} • {member.company}</p>
                   </div>
                   <div className="flex gap-2 pt-3 border-t border-gray-200">
                     <button
-                      onClick={() => handleMemberAction(member.id, 'approve')}
-                      className="flex-1 px-3 py-2 text-xs bg-green-500 text-white rounded hover:opacity-90 transition-opacity"
+                      onClick={() => memberAction(member.id, 'approve')}
+                      className="flex-1 px-3 py-2 text-xs bg-green-500 text-white rounded hover:opacity-90"
                     >
                       ✓ Approve
                     </button>
                     <button
-                      onClick={() => handleMemberAction(member.id, 'deny')}
-                      className="flex-1 px-3 py-2 text-xs bg-red-500 text-white rounded hover:opacity-90 transition-opacity"
+                      onClick={() => memberAction(member.id, 'deny')}
+                      className="flex-1 px-3 py-2 text-xs bg-red-500 text-white rounded hover:opacity-90"
                     >
                       ✕ Deny
                     </button>
@@ -113,53 +299,133 @@ function AdminView() {
           )}
         </section>
 
-        {/* Weekly Match Suggestions */}
+        {/* Match Suggestions */}
         <section>
-          <div className="mb-4">
-            <h3 className="text-sm font-bold text-navy uppercase tracking-wide">Weekly Match Suggestions</h3>
-            <p className="text-xs text-gray-600 mt-1">Generated by the compatibility engine</p>
-          </div>
+          <SectionHeader
+            title="Weekly Match Suggestions"
+            subtitle="Introduce members to open a DM between them with a concierge intro"
+          />
           {matchSuggestions.length === 0 ? (
             <p className="text-sm text-gray-500">Not enough verified members to generate matches</p>
           ) : (
             <div className="space-y-2">
-              {matchSuggestions.map((match, index) => (
-                <div
-                  key={`${match.userId}-${match.matchedUserId}-${index}`}
-                  className="bg-white border border-gray-200 rounded-lg p-3 flex justify-between items-center"
-                >
-                  <p className="text-xs text-gray-700">
-                    <span className="font-semibold text-navy">{match.userName}</span>
-                    {' ↔ '}
-                    <span className="font-semibold text-navy">{match.matchedName}</span>
-                    <span className="text-gray-500"> ({match.matchedTitle}, {match.matchedCompany})</span>
-                  </p>
-                  <span className="text-xs font-bold text-blue ml-3 flex-shrink-0">{match.score}</span>
-                </div>
-              ))}
+              {matchSuggestions.map((match, index) => {
+                const key = `${match.userId}-${match.matchedUserId}`;
+                return (
+                  <div
+                    key={`${key}-${index}`}
+                    className="bg-white border border-gray-200 rounded-lg p-3 flex items-center gap-3"
+                  >
+                    <p className="text-xs text-gray-700 flex-1 min-w-0">
+                      <span className="font-semibold text-navy">{match.userName}</span>
+                      {' ↔ '}
+                      <span className="font-semibold text-navy">{match.matchedName}</span>
+                      <span className="text-gray-500"> ({match.matchedTitle}, {match.matchedCompany})</span>
+                    </p>
+                    <span className="text-xs font-bold text-blue flex-shrink-0">{match.score}</span>
+                    {introduced[key] ? (
+                      <span className="text-xs text-green-600 font-semibold flex-shrink-0">Introduced ✓</span>
+                    ) : (
+                      <button
+                        onClick={() => introduce(match)}
+                        className="px-3 py-1.5 text-xs bg-blue text-white rounded hover:opacity-90 flex-shrink-0"
+                      >
+                        Introduce
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
         </section>
 
         {/* Events Management */}
         <section>
-          <div className="mb-4">
-            <h3 className="text-sm font-bold text-navy uppercase tracking-wide">Upcoming Events</h3>
-            <p className="text-xs text-gray-600 mt-1">{events.length} events scheduled</p>
-          </div>
-          <div className="space-y-3">
+          <SectionHeader title="Events" subtitle={`${events.length} events scheduled`} />
+          <div className="space-y-3 mb-3">
             {events.map((event) => {
               const registered = event.registered ?? 0;
               const capacity = event.capacity || 0;
               const pct = capacity ? Math.round((registered / capacity) * 100) : 0;
+              const isEditing = editingEventId === event.id;
               return (
                 <div key={event.id} className="bg-white border border-gray-200 rounded-lg p-4">
-                  <div className="flex justify-between items-start">
-                    <div className="flex-1">
-                      <p className="font-semibold text-sm text-navy">{event.title}</p>
-                      <p className="text-xs text-gray-600">
-                        {formatEventDate(event.startDate)} at {formatEventTime(event.startDate)}
-                      </p>
+                  {isEditing ? (
+                    <div className="space-y-2">
+                      <input
+                        value={editingEvent.title}
+                        onChange={(e) => setEditingEvent((ev) => ({ ...ev, title: e.target.value }))}
+                        className={`${inputCls} w-full`}
+                        placeholder="Title"
+                      />
+                      <div className="flex flex-col md:flex-row gap-2">
+                        <input
+                          type="datetime-local"
+                          value={editingEvent.startDate}
+                          onChange={(e) => setEditingEvent((ev) => ({ ...ev, startDate: e.target.value }))}
+                          className={`${inputCls} flex-1`}
+                        />
+                        <input
+                          value={editingEvent.location || ''}
+                          onChange={(e) => setEditingEvent((ev) => ({ ...ev, location: e.target.value }))}
+                          className={`${inputCls} flex-1`}
+                          placeholder="Location"
+                        />
+                        <input
+                          type="number"
+                          value={editingEvent.capacity || ''}
+                          onChange={(e) => setEditingEvent((ev) => ({ ...ev, capacity: e.target.value }))}
+                          className={`${inputCls} w-24`}
+                          placeholder="Capacity"
+                        />
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => saveEvent(event.id)}
+                          className="px-4 py-1.5 text-xs bg-blue text-white rounded hover:opacity-90"
+                        >
+                          Save
+                        </button>
+                        <button
+                          onClick={() => setEditingEventId(null)}
+                          className="px-4 py-1.5 text-xs text-gray-600 hover:bg-gray-100 rounded"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="flex items-start gap-2">
+                        <div className="flex-1 min-w-0">
+                          <p className="font-semibold text-sm text-navy">{event.title}</p>
+                          <p className="text-xs text-gray-600">
+                            {formatEventDate(event.startDate)} at {formatEventTime(event.startDate)}
+                            {event.location ? ` • ${event.location}` : ''}
+                          </p>
+                        </div>
+                        <button
+                          onClick={() => {
+                            setEditingEventId(event.id);
+                            setEditingEvent({
+                              title: event.title,
+                              startDate: new Date(event.startDate).toISOString().slice(0, 16),
+                              location: event.location || '',
+                              capacity: event.capacity || '',
+                            });
+                          }}
+                          className="px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-100 rounded"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          onClick={() => deleteEvent(event.id)}
+                          className="px-3 py-1.5 text-xs text-red-500 hover:bg-red-50 rounded"
+                        >
+                          Delete
+                        </button>
+                      </div>
                       {capacity > 0 && (
                         <>
                           <div className="mt-2 w-full bg-gray-200 rounded-full h-2">
@@ -173,30 +439,67 @@ function AdminView() {
                           </p>
                         </>
                       )}
-                    </div>
-                  </div>
+                    </>
+                  )}
                 </div>
               );
             })}
+          </div>
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 space-y-2">
+            <input
+              placeholder="New event title"
+              value={newEvent.title}
+              onChange={(e) => setNewEvent((ev) => ({ ...ev, title: e.target.value }))}
+              className={`${inputCls} w-full`}
+            />
+            <div className="flex flex-col md:flex-row gap-2">
+              <input
+                type="datetime-local"
+                value={newEvent.startDate}
+                onChange={(e) => setNewEvent((ev) => ({ ...ev, startDate: e.target.value }))}
+                className={`${inputCls} flex-1`}
+              />
+              <input
+                placeholder="Location"
+                value={newEvent.location}
+                onChange={(e) => setNewEvent((ev) => ({ ...ev, location: e.target.value }))}
+                className={`${inputCls} flex-1`}
+              />
+              <input
+                type="number"
+                placeholder="Capacity"
+                value={newEvent.capacity}
+                onChange={(e) => setNewEvent((ev) => ({ ...ev, capacity: e.target.value }))}
+                className={`${inputCls} w-full md:w-24`}
+              />
+              <button
+                onClick={createEvent}
+                disabled={!newEvent.title.trim() || !newEvent.startDate}
+                className="px-4 py-2 text-xs bg-blue text-white rounded-lg hover:opacity-90 disabled:bg-gray-300"
+              >
+                + Create Event
+              </button>
+            </div>
           </div>
         </section>
 
         {/* Quick Stats */}
         <section>
-          <h3 className="text-sm font-bold text-navy uppercase tracking-wide mb-4">Quick Stats</h3>
+          <SectionHeader title="Quick Stats" />
           <div className="grid grid-cols-3 gap-3">
-            <div className="bg-blue bg-opacity-5 border border-blue rounded-lg p-4 text-center">
-              <p className="text-2xl font-bold text-blue">{stats.members}</p>
-              <p className="text-xs text-gray-600 mt-1">Verified Members</p>
-            </div>
-            <div className="bg-blue bg-opacity-5 border border-blue rounded-lg p-4 text-center">
-              <p className="text-2xl font-bold text-blue">{stats.messages}</p>
-              <p className="text-xs text-gray-600 mt-1">Messages</p>
-            </div>
-            <div className="bg-blue bg-opacity-5 border border-blue rounded-lg p-4 text-center">
-              <p className="text-2xl font-bold text-blue">{stats.matches}</p>
-              <p className="text-xs text-gray-600 mt-1">Matches</p>
-            </div>
+            {[
+              { value: stats.members, label: 'Verified Members' },
+              { value: stats.messages, label: 'Messages' },
+              { value: stats.matches, label: 'Matches' },
+            ].map((stat) => (
+              <div
+                key={stat.label}
+                className="bg-blue bg-opacity-5 border border-blue rounded-lg p-4 text-center"
+              >
+                <p className="text-2xl font-bold text-blue">{stat.value}</p>
+                <p className="text-xs text-gray-600 mt-1">{stat.label}</p>
+              </div>
+            ))}
           </div>
         </section>
       </div>

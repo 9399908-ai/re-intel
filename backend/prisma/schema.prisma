@@ -34,13 +34,16 @@ model User {
   feedbackAsReceiver Feedback[] @relation("ReceiverFeedback")
 }
 
-// Channel model
+// Channel model — type "group" for communities, "dm" for direct messages.
+// dmParticipants holds display names until auth (Phase 5) binds real users.
 model Channel {
-  id        Int     @id @default(autoincrement())
-  name      String  @unique
-  description String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id             Int      @id @default(autoincrement())
+  name           String   @unique
+  description    String?
+  type           String   @default("group")
+  dmParticipants String[] @default([])
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
   // Relations
   users     User[]
@@ -56,8 +59,10 @@ model Message {
   senderName String
   sender     User?    @relation(fields: [senderId], references: [id])
   senderId   Int?
-  channel    Channel  @relation(fields: [channelId], references: [id])
+  channel    Channel  @relation(fields: [channelId], references: [id], onDelete: Cascade)
   channelId  Int
+  replyTo    Json?    // { id, sender, content } snapshot of the quoted message
+  reactions  Json     @default("{}") // { "👍": ["Name A", "Name B"] }
   createdAt  DateTime @default(now())
 
   @@index([channelId])
@@ -122,7 +127,7 @@ model Event {
 // Event Registration model
 model EventRegistration {
   id        Int     @id @default(autoincrement())
-  event     Event   @relation(fields: [eventId], references: [id])
+  event     Event   @relation(fields: [eventId], references: [id], onDelete: Cascade)
   eventId   Int
   userEmail String
   status    String  // "registered", "attended", "cancelled"
