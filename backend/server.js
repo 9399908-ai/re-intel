@@ -9,10 +9,8 @@ import {
   hashPasswordSync,
   verifyPassword,
   signToken,
-  verifyToken,
   sanitizeUser,
-  requireAuth,
-  requireAdmin,
+  makeAuthMiddleware,
 } from './auth.js';
 
 dotenv.config();
@@ -216,6 +214,23 @@ async function persistMessage(channelName, payload, senderId = null) {
 async function findUserByEmail(email) {
   if (prisma) return prisma.user.findUnique({ where: { email } });
   return memory.users.find((u) => u.email === email) || null;
+}
+
+async function findUserById(id) {
+  if (prisma) return prisma.user.findUnique({ where: { id } });
+  return memory.users.find((u) => u.id === id) || null;
+}
+
+const { requireAuth, requireAdmin, authenticateSocket } = makeAuthMiddleware(findUserByEmail);
+
+// Kick every socket a user has open (used when they're removed or demoted)
+function disconnectUser(name, reason) {
+  const sockets = nameToSockets.get(name);
+  if (!sockets) return;
+  for (const socketId of [...sockets]) {
+    io.to(socketId).emit('force-logout', { reason });
+    io.sockets.sockets.get(socketId)?.disconnect(true);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -591,6 +606,85 @@ app.post('/api/events/:id/register', requireAuth, async (req, res, next) => {
 });
 
 // Members (admin)
+
+// Full directory of approved members
+app.get('/api/members', requireAdmin, async (req, res, next) => {
+  try {
+    const members = prisma
+      ? await prisma.user.findMany({ where: { verified: true }, orderBy: { name: 'asc' } })
+      : [...memory.users.filter((u) => u.verified)].sort((a, b) => a.name.localeCompare(b.name));
+    res.json({ members: members.map(sanitizeUser) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post('/api/members/:id/promote', requireAdmin, async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    const target = await findUserById(id);
+    if (!target) return res.status(404).json({ error: 'member not found' });
+    if (target.isAdmin) return res.json({ member: sanitizeUser(target) });
+
+    if (prisma) {
+      const user = await prisma.user.update({ where: { id }, data: { isAdmin: true } });
+      emitToUser(user.name, 'role-changed', { isAdmin: true });
+      return res.json({ member: sanitizeUser(user) });
+    }
+    target.isAdmin = true;
+    emitToUser(target.name, 'role-changed', { isAdmin: true });
+    res.json({ member: sanitizeUser(target) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post('/api/members/:id/demote', requireAdmin, async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    if (id === req.user.id) {
+      return res.status(400).json({ error: 'you cannot demote yourself' });
+    }
+    const target = await findUserById(id);
+    if (!target) return res.status(404).json({ error: 'member not found' });
+
+    if (prisma) {
+      const user = await prisma.user.update({ where: { id }, data: { isAdmin: false } });
+      emitToUser(user.name, 'role-changed', { isAdmin: false });
+      return res.json({ member: sanitizeUser(user) });
+    }
+    target.isAdmin = false;
+    emitToUser(target.name, 'role-changed', { isAdmin: false });
+    res.json({ member: sanitizeUser(target) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Remove an approved member: account deleted, sockets kicked, token dead
+// on the next request (auth middleware re-checks the account every time)
+app.post('/api/members/:id/remove', requireAdmin, async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    if (id === req.user.id) {
+      return res.status(400).json({ error: 'you cannot remove yourself' });
+    }
+    const target = await findUserById(id);
+    if (!target) return res.status(404).json({ error: 'member not found' });
+
+    if (prisma) {
+      await prisma.user.delete({ where: { id } }); // matches/feedback cascade, messages keep senderName
+    } else {
+      const index = memory.users.findIndex((u) => u.id === id);
+      memory.users.splice(index, 1);
+    }
+    disconnectUser(target.name, 'Your membership has been removed by an admin.');
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
 app.get('/api/members/pending', requireAdmin, async (req, res, next) => {
   try {
     const pending = prisma
@@ -718,11 +812,13 @@ app.post('/api/matches/introduce', requireAdmin, async (req, res, next) => {
 // Socket.io — JWT-authenticated real-time chat
 // ---------------------------------------------------------------------------
 
-io.use((socket, next) => {
+io.use(async (socket, next) => {
   try {
     const token = socket.handshake.auth?.token;
     if (!token) return next(new Error('unauthorized'));
-    socket.data.user = verifyToken(token);
+    const user = await authenticateSocket(token);
+    if (!user) return next(new Error('unauthorized'));
+    socket.data.user = user;
     next();
   } catch {
     next(new Error('unauthorized'));

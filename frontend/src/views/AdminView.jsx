@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { authFetch as api } from '../api';
+import { avatarColor } from '../config';
 
 const formatEventDate = (iso) =>
   new Date(iso).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
@@ -16,8 +17,11 @@ function SectionHeader({ title, subtitle }) {
   );
 }
 
-function AdminView() {
+function AdminView({ user, online }) {
   const [channels, setChannels] = useState([]);
+  const [members, setMembers] = useState([]);
+  const [memberQuery, setMemberQuery] = useState('');
+  const [confirmRemoveId, setConfirmRemoveId] = useState(null);
   const [pendingMembers, setPendingMembers] = useState([]);
   const [events, setEvents] = useState([]);
   const [stats, setStats] = useState({ members: 0, messages: 0, matches: 0 });
@@ -36,14 +40,17 @@ function AdminView() {
 
   const loadData = useCallback(async () => {
     try {
-      const [channelsRes, membersRes, eventsRes, statsRes, matchesRes] = await Promise.all([
-        api('/api/channels'),
-        api('/api/members/pending'),
-        api('/api/events'),
-        api('/api/stats'),
-        api('/api/matches/suggestions'),
-      ]);
+      const [channelsRes, directoryRes, membersRes, eventsRes, statsRes, matchesRes] =
+        await Promise.all([
+          api('/api/channels'),
+          api('/api/members'),
+          api('/api/members/pending'),
+          api('/api/events'),
+          api('/api/stats'),
+          api('/api/matches/suggestions'),
+        ]);
       setChannels((channelsRes.channels || []).filter((c) => c.type !== 'dm'));
+      setMembers(directoryRes.members || []);
       setPendingMembers(membersRes.members || []);
       setEvents(eventsRes.events || []);
       setStats(statsRes.stats || { members: 0, messages: 0, matches: 0 });
@@ -102,9 +109,31 @@ function AdminView() {
   // Member actions
   const memberAction = (id, action) =>
     run(async () => {
-      await api(`/api/members/${id}/${action}`, { method: 'POST' });
+      const result = await api(`/api/members/${id}/${action}`, { method: 'POST' });
       setPendingMembers((prev) => prev.filter((m) => m.id !== id));
+      if (action === 'approve' && result.member) {
+        setMembers((prev) =>
+          [...prev, result.member].sort((a, b) => a.name.localeCompare(b.name))
+        );
+        setStats((prev) => ({ ...prev, members: prev.members + 1 }));
+      }
     }, `Could not ${action} member.`);
+
+  const setAdmin = (id, makeAdmin) =>
+    run(async () => {
+      const { member } = await api(`/api/members/${id}/${makeAdmin ? 'promote' : 'demote'}`, {
+        method: 'POST',
+      });
+      setMembers((prev) => prev.map((m) => (m.id === id ? member : m)));
+    }, `Could not ${makeAdmin ? 'promote' : 'demote'} member.`);
+
+  const removeMember = (id) =>
+    run(async () => {
+      await api(`/api/members/${id}/remove`, { method: 'POST' });
+      setMembers((prev) => prev.filter((m) => m.id !== id));
+      setStats((prev) => ({ ...prev, members: Math.max(0, prev.members - 1) }));
+      setConfirmRemoveId(null);
+    }, 'Could not remove member.');
 
   // Match actions
   const introduce = (match) =>
@@ -288,6 +317,106 @@ function AdminView() {
               ))}
             </div>
           )}
+        </section>
+
+        {/* Member Directory */}
+        <section>
+          <SectionHeader
+            title="Member Directory"
+            subtitle={`${members.length} approved members — promote admins or remove members`}
+          />
+          <input
+            placeholder="Search by name, company, email, role, or market…"
+            value={memberQuery}
+            onChange={(e) => setMemberQuery(e.target.value)}
+            className={`${inputCls} w-full mb-3`}
+          />
+          <div className="space-y-2">
+            {members
+              .filter((m) => {
+                const q = memberQuery.trim().toLowerCase();
+                if (!q) return true;
+                return [m.name, m.company, m.email, m.title, m.role, ...(m.markets || [])]
+                  .filter(Boolean)
+                  .some((field) => field.toLowerCase().includes(q));
+              })
+              .map((member) => {
+                const isSelf = member.id === user.id;
+                const isOnline = online.includes(member.name);
+                return (
+                  <div
+                    key={member.id}
+                    className="bg-white border border-gray-200 rounded-lg px-4 py-3 flex items-center gap-3"
+                  >
+                    <span className="relative flex-shrink-0">
+                      <span
+                        className="w-9 h-9 rounded-full flex items-center justify-center text-white text-sm font-bold"
+                        style={{ backgroundColor: avatarColor(member.name) }}
+                      >
+                        {member.name.charAt(0).toUpperCase()}
+                      </span>
+                      {isOnline && (
+                        <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-green-500 border-2 border-white rounded-full"></span>
+                      )}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-semibold text-sm text-navy truncate">
+                        {member.name}
+                        {isSelf && <span className="text-gray-400 font-normal"> (you)</span>}
+                        {member.isAdmin && (
+                          <span className="ml-2 text-[10px] bg-navy text-white px-1.5 py-0.5 rounded uppercase tracking-wide">
+                            Admin
+                          </span>
+                        )}
+                      </p>
+                      <p className="text-xs text-gray-600 truncate">
+                        {[member.title, member.company].filter(Boolean).join(' • ')} — {member.email}
+                      </p>
+                      {(member.markets?.length > 0 || member.assetTypes?.length > 0) && (
+                        <p className="text-xs text-gray-500 truncate">
+                          {[...(member.markets || []), ...(member.assetTypes || [])].join(', ')}
+                        </p>
+                      )}
+                    </div>
+                    {!isSelf && (
+                      <div className="flex gap-1.5 flex-shrink-0">
+                        {confirmRemoveId === member.id ? (
+                          <>
+                            <button
+                              onClick={() => removeMember(member.id)}
+                              className="px-3 py-1.5 text-xs bg-red-500 text-white rounded hover:opacity-90"
+                            >
+                              Confirm remove
+                            </button>
+                            <button
+                              onClick={() => setConfirmRemoveId(null)}
+                              className="px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-100 rounded"
+                            >
+                              Cancel
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <button
+                              onClick={() => setAdmin(member.id, !member.isAdmin)}
+                              className="px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-100 rounded"
+                            >
+                              {member.isAdmin ? 'Revoke admin' : 'Make admin'}
+                            </button>
+                            <button
+                              onClick={() => setConfirmRemoveId(member.id)}
+                              className="px-3 py-1.5 text-xs text-red-500 hover:bg-red-50 rounded"
+                            >
+                              Remove
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+          </div>
         </section>
 
         {/* Match Suggestions */}

@@ -22,13 +22,29 @@ function App() {
     setAuth(null);
   };
 
+  const handleUserUpdate = (patch) => {
+    setAuth((current) => {
+      if (!current) return current;
+      const next = { ...current, user: { ...current.user, ...patch } };
+      saveAuth(next);
+      return next;
+    });
+  };
+
   if (!auth) {
     return <AuthView onAuthed={handleAuthed} />;
   }
-  return <Workspace user={auth.user} token={auth.token} onLogout={handleLogout} />;
+  return (
+    <Workspace
+      user={auth.user}
+      token={auth.token}
+      onLogout={handleLogout}
+      onUserUpdate={handleUserUpdate}
+    />
+  );
 }
 
-function Workspace({ user, token, onLogout }) {
+function Workspace({ user, token, onLogout, onUserUpdate }) {
   const [currentView, setCurrentView] = useState('chat');
   const [channels, setChannels] = useState([]);
   const [selectedChannel, setSelectedChannel] = useState(null); // channel name
@@ -94,18 +110,24 @@ function Workspace({ user, token, onLogout }) {
     const onPresence = (data) => setOnline(data.online || []);
     const onChannelsUpdated = () => fetchChannels();
     const onDmStarted = () => fetchChannels();
+    const onForceLogout = () => onLogout();
+    const onRoleChanged = ({ isAdmin }) => onUserUpdate({ isAdmin });
 
     socket.on('receive-message', onMessage);
     socket.on('presence', onPresence);
     socket.on('channels-updated', onChannelsUpdated);
     socket.on('dm-started', onDmStarted);
+    socket.on('force-logout', onForceLogout);
+    socket.on('role-changed', onRoleChanged);
     return () => {
       socket.off('receive-message', onMessage);
       socket.off('presence', onPresence);
       socket.off('channels-updated', onChannelsUpdated);
       socket.off('dm-started', onDmStarted);
+      socket.off('force-logout', onForceLogout);
+      socket.off('role-changed', onRoleChanged);
     };
-  }, [socket, fetchChannels]);
+  }, [socket, fetchChannels, onLogout, onUserUpdate]);
 
   const handleSelectChannel = (name) => {
     setSelectedChannel(name);
@@ -217,7 +239,7 @@ function Workspace({ user, token, onLogout }) {
             </div>
           )}
           {currentView === 'calendar' && <CalendarView user={user} />}
-          {currentView === 'admin' && user.isAdmin && <AdminView />}
+          {currentView === 'admin' && user.isAdmin && <AdminView user={user} online={online} />}
         </div>
       </div>
     </div>
